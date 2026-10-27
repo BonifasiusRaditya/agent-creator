@@ -1,0 +1,10 @@
+.venv/
+.data/
+.cache/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc
+test-results/
+.firecrawl/
+

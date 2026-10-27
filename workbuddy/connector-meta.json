@@ -1,0 +1,17 @@
+{
+  "name": "trendforge",
+  "name_en": "TrendForge",
+  "name_zh": "TrendForge",
+  "description": "Research, plan and produce short-form videos with a connected local creator workspace.",
+  "description_en": "Research, write and produce short videos in your local TrendForge workspace.",
+  "description_zh": "在本地 TrendForge 工作区研究、编写和制作短视频。",
+  "source": "trendforge-creator",
+  "type": "mcp",
+  "version": "1.0.0",
+  "minWorkbuddyVersion": "4.24.0",
+  "examples_en": ["Help me create a 30-second study tips video.", "Check the status of my video export."],
+  "examples_zh": ["帮我制作一个30秒的学习技巧短视频。", "查看我的视频导出状态。"],
+  "author": "TrendForge",
+  "icon": "icon.svg"
+}
+

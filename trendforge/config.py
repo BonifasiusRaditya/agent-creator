@@ -1,0 +1,65 @@
+import json
+import os
+import secrets
+import threading
+from pathlib import Path
+
+from cryptography.fernet import Fernet
+
+ROOT = Path(__file__).resolve().parent.parent
+DATA = Path(os.environ.get("TRENDFORGE_DATA_DIR", ROOT / ".data")).resolve()
+STATIC = Path(__file__).resolve().parent / "static"
+
+
+class Settings:
+    """Encrypted local configuration. Credentials never appear in public responses."""
+
+    defaults = {
+        "ai_base_url": "", "ai_model": "", "ai_api_key": "",
+        "youtube_api_key": "", "pexels_api_key": "", "speech_model": "base",
+        "password_hash": "", "password_salt": "", "service_token": "",
+    }
+
+    def __init__(self, directory=DATA):
+        self.directory = Path(directory)
+        self.directory.mkdir(parents=True, exist_ok=True)
+        self.lock = threading.RLock()
+        keyfile = self.directory / "config.key"
+        if not keyfile.exists():
+            fd = os.open(keyfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(Fernet.generate_key())
+        self.cipher = Fernet(keyfile.read_bytes())
+        self.path = self.directory / "settings.enc"
+        self.values = dict(self.defaults)
+        if self.path.exists():
+            self.values.update(json.loads(self.cipher.decrypt(self.path.read_bytes())))
+        if not self.values["service_token"]:
+            self.update({"service_token": secrets.token_urlsafe(40)})
+
+    def get(self, key, default=None):
+        with self.lock:
+            return self.values.get(key, default)
+
+    def update(self, values):
+        with self.lock:
+            self.values.update(values)
+            temp = self.path.with_suffix(".tmp")
+            temp.write_bytes(self.cipher.encrypt(json.dumps(self.values).encode()))
+            try:
+                os.chmod(temp, 0o600)
+            except OSError:
+                pass
+            temp.replace(self.path)
+
+    def public(self):
+        return {
+            "ai_base_url": self.get("ai_base_url"), "ai_model": self.get("ai_model"),
+            "ai_connected": bool(self.get("ai_base_url") and self.get("ai_model")),
+            "ai_key_configured": bool(self.get("ai_api_key")),
+            "youtube_configured": bool(self.get("youtube_api_key")),
+            "pexels_configured": bool(self.get("pexels_api_key")),
+            "speech_model": self.get("speech_model"),
+            "storage_path": str(self.directory),
+        }
+
