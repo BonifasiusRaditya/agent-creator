@@ -24,6 +24,8 @@ def validate_base_url(url):
 
 
 async def provider_json(settings, system, context):
+    if settings.get("ai_engine") != "openai_compatible":
+        raise AppError("AI writing runs in WorkBuddy. Use the TrendForge connector to complete your writing request.", "WORKBUDDY_REQUIRED", 409)
     base = settings.get("ai_base_url")
     model = settings.get("ai_model")
     if not base or not model:
@@ -112,7 +114,7 @@ async def youtube_get(client, endpoint, params, api_key):
                     reason = "unavailable"
                 if reason in {"quotaExceeded", "dailyLimitExceeded"}:
                     raise AppError("The YouTube research quota is used up. Use a saved research run or continue with your own topic.", "YOUTUBE_QUOTA", 429)
-                raise AppError("YouTube research could not be completed. Check your API key and enabled API in Connections.", "YOUTUBE_ERROR", 502)
+                raise AppError("YouTube research could not be completed. Ask the workspace owner to check its API key and enabled API.", "YOUTUBE_ERROR", 502)
             return response.json()
         except httpx.HTTPError:
             if attempt == 2:
@@ -133,7 +135,7 @@ async def research_youtube(settings, request):
         return {**request.model_dump(), "data_mode": "manual", "items": [], "warnings": [], "fetched_at": now()}
     key = settings.get("youtube_api_key")
     if not key:
-        raise AppError("Add a YouTube Data API key in Connections, or continue without research.", "YOUTUBE_NOT_CONFIGURED", 409)
+        raise AppError("YouTube research has not been set up by the workspace owner. Continue with your own topic for now.", "YOUTUBE_NOT_CONFIGURED", 409)
     warnings = []
     async with httpx.AsyncClient(timeout=20) as client:
         if request.source_mode == "chart":
@@ -176,7 +178,7 @@ async def research_youtube(settings, request):
 async def pexels_search(settings, query):
     key = settings.get("pexels_api_key")
     if not key:
-        raise AppError("Connect a Pexels API key before searching stock footage.", "PEXELS_NOT_CONFIGURED", 409)
+        raise AppError("Stock footage has not been set up by the workspace owner. You can upload your own clips.", "PEXELS_NOT_CONFIGURED", 409)
     try:
         async with httpx.AsyncClient(timeout=20) as client:
             r = await client.get("https://api.pexels.com/v1/videos/search", params={"query": query, "orientation": "portrait", "per_page": 5}, headers={"Authorization": key})

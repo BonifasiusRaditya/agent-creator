@@ -1,6 +1,8 @@
 import argparse
 import os
 
+from . import config  # Loads the project .env before CLI defaults are evaluated.
+
 
 def main():
     import uvicorn

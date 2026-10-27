@@ -1,4 +1,4 @@
-param([int]$Port = 8765)
+param([int]$Port)
 $ErrorActionPreference = 'Stop'
 Set-Location -LiteralPath $PSScriptRoot
 $env:UV_CACHE_DIR = Join-Path $PSScriptRoot '.cache\uv'
@@ -7,5 +7,9 @@ if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
 }
 uv sync --group dev
 if ($LASTEXITCODE -ne 0) { throw 'Dependency setup failed.' }
-uv run trendforge --port $Port
+if ($PSBoundParameters.ContainsKey('Port')) {
+    uv run trendforge --port $Port
+} else {
+    uv run trendforge
+}
 

@@ -14,7 +14,8 @@ async def main():
             await session.initialize()
             tools = await session.list_tools()
             names = {t.name for t in tools.tools}
-            assert {"create_project", "save_brief", "save_edit_plan", "start_prepare", "get_job", "start_export"}.issubset(names)
+            assert {"create_project", "list_projects", "list_agent_requests", "get_agent_request", "save_agent_result",
+                    "search_stock_footage", "save_brief", "save_edit_plan", "start_prepare", "get_job", "start_export"}.issubset(names)
             assert not any("approve" in n for n in names)
             response = await session.call_tool("trendforge_health", {})
             assert not response.isError

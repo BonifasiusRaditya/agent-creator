@@ -44,8 +44,10 @@ def test_manual_research_and_missing_credentials_are_honest(client):
     assert manual.json()["items"] == []
     assert manual.json()["data_mode"] == "manual"
     ideas = client.post(base + "/ai/ideas", json={"source_video_ids": []})
-    assert ideas.status_code == 409
-    assert ideas.json()["error"]["code"] == "AI_NOT_CONFIGURED"
+    assert ideas.status_code == 202
+    assert ideas.json()["engine"] == "workbuddy"
+    assert ideas.json()["status"] == "pending"
+    assert client.get(base).json()["ideas"] == []  # Waiting is never fabricated AI output.
 
 
 def test_invalid_media_and_cross_project_access(client):

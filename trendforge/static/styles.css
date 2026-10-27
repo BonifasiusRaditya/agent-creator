@@ -535,3 +535,8 @@ html{scrollbar-color:#49494F #101012}
 .auth-art .art-phone:before{background:var(--accent)}
 .auth-art .art-land{background:#6E371B}
 .auth-art .art-land.second{background:#BE5A20}
+.agent-connection{grid-column:1/-1}
+.setup-steps{padding-left:20px;color:var(--muted);font-size:13px;line-height:1.9;margin:18px 0 24px}
+.wrap{flex-wrap:wrap}
+.agent-prompt{margin:9px 0 15px;resize:vertical;font-size:12px;line-height:1.7}
+.agent-request{flex-wrap:wrap}

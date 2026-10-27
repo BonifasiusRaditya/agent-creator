@@ -7,6 +7,7 @@ from trendforge import integrations
 
 
 def test_compatible_ai_ideas_and_brief_are_validated_and_persisted(client, monkeypatch):
+    monkeypatch.setenv("TRENDFORGE_AI_ENGINE", "openai_compatible")
     calls = []
 
     def provider(request):
@@ -42,6 +43,7 @@ def test_compatible_ai_ideas_and_brief_are_validated_and_persisted(client, monke
 
 
 def test_invalid_ai_response_cannot_be_approved_as_a_brief(client, monkeypatch):
+    monkeypatch.setenv("TRENDFORGE_AI_ENGINE", "openai_compatible")
     actual_client = httpx.AsyncClient
     transport = httpx.MockTransport(lambda _: httpx.Response(200, json={"choices": [{"message": {"content": '{"ideas":[]}'}}]}))
     monkeypatch.setattr(integrations.httpx, "AsyncClient", lambda **kwargs: actual_client(transport=transport, **kwargs))

@@ -6,7 +6,8 @@
 Browser (English HTML/CSS/JavaScript)
     ↕ same-origin session + CSRF
 FastAPI project service ── SQLite documents, versions, jobs and events
-    ├─ HTTPX → configured OpenAI-compatible AI provider
+    ├─ persisted writing requests ↔ WorkBuddy via local MCP + Skill (primary AI)
+    ├─ HTTPX → OpenAI-compatible writing adapter (explicit optional mode only)
     ├─ HTTPX → YouTube Data API v3
     ├─ HTTPX → Pexels, when configured
     └─ one media worker
@@ -20,7 +21,9 @@ WorkBuddy → local stdio MCP connector → the same FastAPI service
 
 The UI has no separate build system or duplicate application server. Python dependencies are locked in `uv.lock`. FFmpeg is resolved from `FFMPEG_BINARY`, the system PATH, or the installed binary package. Media validation uses PyAV rather than requiring a separate ffprobe executable.
 
-The direct AI-writing API is an explicitly approved extension to the original PRD: creators can generate ideas and briefs in the website, while WorkBuddy remains a supported agent host. Neither path can grant human approvals through the connector.
+WorkBuddy is the default AI engine. Website writing actions persist a pending agent request, with project revision and selected source IDs. WorkBuddy reads the request/schema and submits its own generated result via MCP. A pending request is not executing until WorkBuddy handles it. The browser observes saved changes while preserving unsaved edits. Stale/cancelled requests cannot write; repeated identical submissions are idempotent. Human approvals remain operator-only. An explicitly enabled OpenAI-compatible adapter remains available without automatic fallback.
+
+Service credentials load from the project `.env` at process startup using python-dotenv without interpolation. Precedence is process environment, `.env`, encrypted legacy settings, defaults. Explicit empty environment values disable services. Public responses expose configuration flags and sources, never keys. Environment-managed values reject settings API overrides. The frontend has no credential-entry forms.
 
 ## Implemented journey
 
@@ -35,7 +38,7 @@ The direct AI-writing API is an explicitly approved extension to the original PR
 | Export | Real MP4 and SRT; full decode/profile checks; browser range streaming and downloads; export history |
 | Recovery | Single active job, idempotency, cancel, restart marking, preserved draft checkpoint for STT retry |
 | Privacy | Local session/password; encrypted settings; CSRF/origin/host guards; safe input paths; deletion and retention |
-| WorkBuddy | 16 typed MCP tools; packaged skill/metadata; generated local configuration; no approval tools |
+| WorkBuddy | 21 typed MCP tools; persisted writing requests/results; project discovery, stock search, packaged skill/metadata; runtime connector download; no approval tools |
 | Optional stock | Pexels search/import, approved host validation, same media validator, creator/source credits |
 
 Automatic cuts are timing-based. The application does not claim visual scene understanding, full-platform trend coverage, or viral prediction. It does not rip public YouTube media.
@@ -60,7 +63,7 @@ The live OpenAPI schema is available at `/openapi.json`, and interactive API doc
 | Session | `GET/POST/DELETE /api/v1/session`, `POST /api/v1/setup` |
 | Connections | `GET/PATCH /api/v1/settings`, test, connector configuration, speech-model download |
 | Projects | `GET/POST /api/v1/projects`, `GET/PATCH/DELETE /api/v1/projects/{id}` |
-| Research/writing | research runs, AI ideas, AI brief, manual brief revisions, operator approval |
+| Research/writing | research runs, agent requests/context/schema/cancel/result, optional AI adapter, manual brief revisions, operator approval |
 | Footage | asset upload/list/delete, authorized media streaming, optional stock search/import |
 | Editing | automatic/manual plans and operator approval; prepare jobs |
 | Subtitles | draft/media reads, transcription retry, cue revisions and operator approval |
@@ -75,7 +78,7 @@ Validation uses actual FastAPI, SQLite, FFmpeg, PyAV, libass and the MCP SDK. Bo
 
 The full UI has been tested on desktop and a 393×852 viewport. Browser testing exercised the actual file picker, upload progress, edit approval, asynchronous completion, no-speech confirmation, final video playback readiness, download, and ready confirmation. The final browser video reported 1080×1920, 30.004 seconds, readyState 4, and no playback error.
 
-AI/YouTube account-specific live calls and Pexels access require the creator's credentials. HTTP contract tests simulate these services to verify mapping, validation and failure handling. WorkBuddy's MCP protocol was verified with the official client; installation and login in a particular WorkBuddy account remain user setup. Indonesian transcription accuracy needs evaluation on representative Indonesian recordings; an English reference sample only verified the inference runtime.
+YouTube/Pexels account-specific live calls require owner-managed service credentials; WorkBuddy requires its own signed-in account. Alternative provider calls require explicitly enabled credentials. HTTP contract tests simulate these services to verify mapping, validation and failure handling. WorkBuddy's MCP protocol was verified with the official client; installation and login in a particular WorkBuddy account remain user setup. Indonesian transcription accuracy needs evaluation on representative Indonesian recordings; an English reference sample only verified the inference runtime.
 
 No user video, API key, or fabricated performance telemetry is bundled as project content. Test clips and test-only workspaces live under ignored `test-results/` directories. The UI never presents seeded projects or synthetic research as real creator activity.
 

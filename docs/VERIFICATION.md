@@ -66,3 +66,18 @@ Actual import and account access in Tencent WorkBuddy, live AI-provider requests
 - Importable local connector package: `../build/trendforge-workbuddy.zip`.
 - Locked dependencies: `../uv.lock`.
 
+
+
+## WorkBuddy and owner-managed configuration — 28 October 2026
+
+- Full suite after the engine/configuration change: `26 passed in 35.54s` (`tests`, isolated `test-results/workbuddy-env`). This includes the real FFmpeg export tests.
+- Final targeted checks after connector download and request UI refinements: `11 passed in 2.59s` (environment, WorkBuddy, AI-adapter and API contracts). JavaScript syntax and Python compilation passed.
+- Official MCP stdio client initialized the running main service, discovered 21 tools, and called authenticated agent status successfully. The service reported `ai_engine: workbuddy`; no approval tools were exposed.
+- An isolated browser workspace created a project, queued an ideas task, then received three test ideas submitted through the actual MCP protocol. The open request dialog closed and the result appeared without reload.
+- Developing the chosen test idea queued a brief task. A second MCP roundtrip submitted a schema-valid 30-second brief with three shots. The browser automatically opened Brief, showed the exact saved script and `Draft`, and retained the normal human approval control. A reload preserved the result. No browser warnings/errors were reported.
+- The main Connections page visibly identifies WorkBuddy as the primary AI, offers connector/skill downloads, shows managed service status, and contains zero password/API-key inputs. The existing narrow viewport had no horizontal overflow. Main workspace remains free of test projects and its original login credential was preserved.
+- Config tests cover literal dotenv values, process-over-file precedence, empty values disabling legacy credentials, secret redaction, rejection of browser overrides for environment-managed settings, and a runtime connector archive containing no provider keys. Agent tests cover duplicate requests/results, source validation, malformed output, stale/cancelled tasks, cross-project isolation, and human-only approvals.
+
+Browser evidence: `docs/screenshots/workbuddy-connections.png`, `workbuddy-overview.png`, and `workbuddy-brief-test.png`. The brief screenshot is explicitly test content from the isolated workspace, not a real creator project.
+
+These checks exercise the actual connector/backend/browser transport using test-authored results. They do not claim that a signed-in WorkBuddy account generated those results. WorkBuddy installation/account login and live generation remain to be completed there. YouTube and Pexels live calls await the owner's keys in `.env`; no real keys were added. The alternative model adapter stays off by default.

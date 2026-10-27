@@ -48,15 +48,25 @@ class Shot(Model):
     duration_seconds: float = Field(gt=0, le=60)
 
 
-class BriefInput(Model):
+class BriefContent(Model):
     title: str = Field(min_length=3, max_length=180)
     hook: str = Field(min_length=3, max_length=600)
     angle: str = Field(min_length=5, max_length=1000)
     script: str = Field(min_length=10, max_length=8000)
     cta: str = Field(min_length=2, max_length=600)
     shots: list[Shot] = Field(min_length=3, max_length=5)
+
+
+class BriefInput(BriefContent):
     source_video_ids: list[str] = Field(default_factory=list, max_length=20)
     selected_idea_id: str | None = None
+    expected_project_revision: int = Field(ge=1)
+
+
+class AgentRequestInput(Model):
+    task: Literal["ideas", "brief"]
+    source_video_ids: list[str] = Field(default_factory=list, max_length=5)
+    idea_id: str | None = Field(default=None, max_length=80)
     expected_project_revision: int = Field(ge=1)
 
 

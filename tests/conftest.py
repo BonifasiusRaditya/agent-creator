@@ -4,6 +4,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from trendforge.app import create_app
+from trendforge.config import Settings
+
+
+@pytest.fixture(autouse=True)
+def isolate_service_configuration(monkeypatch):
+    # Tests never use an owner's actual service credentials or selected engine.
+    for name in Settings.env_names.values():
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture
