@@ -1,13 +1,56 @@
 import hashlib
 import json
+import os
 import sqlite3
 import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
+import libsql
+
+from . import config  # Load the project .env for direct database clients too.
 from .errors import AppError
+
+
+class RemoteCursor:
+    """Keep sqlite3.Row-style named access for the official libSQL driver."""
+
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def fetchone(self):
+        row = self.cursor.fetchone()
+        return dict(zip((c[0] for c in self.cursor.description), row)) if row is not None else None
+
+    def fetchall(self):
+        return list(self)
+
+    def __iter__(self):
+        while (row := self.fetchone()) is not None:
+            yield row
+
+
+class RemoteConnection:
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, sql, parameters=()):
+        return RemoteCursor(self.connection.execute(sql, parameters))
+
+    def executescript(self, sql):
+        return self.connection.executescript(sql)
+
+    def commit(self):
+        self.connection.commit()
+
+    def rollback(self):
+        self.connection.rollback()
+
+    def close(self):
+        self.connection.close()
 
 
 def now():
@@ -19,13 +62,30 @@ def new_id(prefix):
 
 
 class Database:
-    def __init__(self, path):
+    def __init__(self, path, *, backend=None, url=None, token=None):
         self.path = str(path)
+        self.url = (url if url is not None else os.getenv("TURSO_DATABASE_URL", "")).strip()
+        self.token = (token if token is not None else os.getenv("TURSO_AUTH_TOKEN", "")).strip()
+        self.backend = backend or os.getenv("TRENDFORGE_DATABASE_BACKEND") or ("turso" if self.url or self.token else "sqlite")
+        if self.backend not in {"sqlite", "turso"}:
+            raise AppError("Choose sqlite or turso as the database backend.", "DATABASE_CONFIG", 503)
+        if self.backend == "turso":
+            parsed = urlparse(self.url)
+            try:
+                port_ok = parsed.port in (None, 443)
+            except ValueError:
+                port_ok = False
+            if (not self.token or parsed.scheme not in {"libsql", "https"} or not parsed.hostname
+                    or not parsed.hostname.endswith(".turso.io") or parsed.username or parsed.password
+                    or not port_ok or parsed.query or parsed.fragment or parsed.path not in {"", "/"}):
+                raise AppError("Set a valid Turso database URL and auth token in the environment.", "DATABASE_CONFIG", 503)
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.lock = threading.RLock()
+        self.context = threading.local()
         with self.connect() as c:
+            if self.backend == "sqlite":
+                c.execute("PRAGMA journal_mode=WAL")
             c.executescript("""
-                PRAGMA journal_mode=WAL;
                 CREATE TABLE IF NOT EXISTS projects(id TEXT PRIMARY KEY, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS documents(id TEXT PRIMARY KEY, project_id TEXT NOT NULL,
                     kind TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL);
@@ -43,16 +103,36 @@ class Database:
     @contextmanager
     def connect(self):
         with self.lock:
-            c = sqlite3.connect(self.path, timeout=20)
-            c.row_factory = sqlite3.Row
+            # Nested methods participate in the caller's transaction. Opening a
+            # second remote connection here could deadlock on the first writer.
+            if getattr(self.context, "connection", None) is not None:
+                yield self.context.connection
+                return
+            c = None
             try:
+                if self.backend == "turso":
+                    c = RemoteConnection(libsql.connect(self.url, auth_token=self.token, timeout=20))
+                else:
+                    c = sqlite3.connect(self.path, timeout=20)
+                    c.row_factory = sqlite3.Row
+                self.context.connection = c
                 yield c
                 c.commit()
+            except libsql.Error:
+                if c:
+                    try:
+                        c.rollback()
+                    except libsql.Error:
+                        pass
+                raise AppError("The Turso database operation failed. Check the connection and database credentials.", "DATABASE_UNAVAILABLE", 503) from None
             except Exception:
-                c.rollback()
+                if c:
+                    c.rollback()
                 raise
             finally:
-                c.close()
+                self.context.connection = None
+                if c:
+                    c.close()
 
     def create_project(self, fields):
         p = {**fields, "id": new_id("prj"), "revision": 1, "phase": "CONTEXT_READY",

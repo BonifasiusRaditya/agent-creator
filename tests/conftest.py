@@ -12,6 +12,8 @@ def isolate_service_configuration(monkeypatch):
     # Tests never use an owner's actual service credentials or selected engine.
     for name in Settings.env_names.values():
         monkeypatch.delenv(name, raising=False)
+    for name in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "TRENDFORGE_DATABASE_BACKEND"):
+        monkeypatch.delenv(name, raising=False)
 
 
 @pytest.fixture

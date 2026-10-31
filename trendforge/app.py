@@ -342,6 +342,7 @@ def create_app(directory=None):
         settings["ffmpeg_available"] = bool(Path(ffmpeg()).is_file())
         settings["speech_models_ready"] = [m for m in ("tiny", "base", "small") if (directory / "models" / f".ready-{m}").exists()]
         settings["active_job"] = public(db().active_job())
+        settings["database_backend"] = db().backend
         settings["workbuddy_last_seen"] = app.state.workbuddy_last_seen
         return settings
 

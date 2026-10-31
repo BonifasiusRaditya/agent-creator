@@ -25,6 +25,14 @@ uv run trendforge --port 8767
 
 Keep one server instance per data folder. Stop the service with Ctrl+C before restarting it.
 
+## Turso database
+
+Set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in the project `.env`. `db.py` automatically selects Turso when either setting is nonempty and requires both valid values; connection failures never fall back to SQLite. `TRENDFORGE_DATABASE_BACKEND=sqlite` explicitly selects local storage for isolated tests or local operation. `turso` explicitly requires the remote database. The official `libsql` Python driver is locked in `uv.lock`.
+
+The backend creates the five application tables and indexes with `IF NOT EXISTS`. Queries use bound parameters; nested database contexts share the same transaction. Login passwords, service tokens and encrypted settings remain in the local data folder. Database sessions and project records live in the selected database; video files/models remain on disk. Keep one application instance per workspace.
+
+An already running server must be restarted to load the database changes. For an existing workspace, stop it before migration. Preview with `uv run python -m scripts.migrate_to_turso`. After approval to transfer project metadata, `uv run python -m scripts.migrate_to_turso --apply` backs up the local database, copies projects/documents/jobs/events into an empty remote workspace in one transaction, and checks row counts. It refuses nonempty destinations or active local jobs. Existing login sessions are not exported. The original database and local media remain; sign in again after switching.
+
 ## Configure services once
 
 Copy `.env.example` to `.env` in this project folder, then fill in the service keys:
