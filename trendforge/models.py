@@ -58,15 +58,20 @@ class BriefContent(Model):
 
 
 class BriefInput(BriefContent):
-    source_video_ids: list[str] = Field(default_factory=list, max_length=20)
+    source_video_ids: list[str] = Field(default_factory=list)
     selected_idea_id: str | None = None
     expected_project_revision: int = Field(ge=1)
 
 
 class AgentRequestInput(Model):
     task: Literal["ideas", "brief"]
-    source_video_ids: list[str] = Field(default_factory=list, max_length=5)
+    source_video_ids: list[str] = Field(default_factory=list)
     idea_id: str | None = Field(default=None, max_length=80)
+    expected_project_revision: int = Field(ge=1)
+
+
+class PostingCaptionInput(Model):
+    text: str = Field(min_length=1, max_length=5000)
     expected_project_revision: int = Field(ge=1)
 
 

@@ -163,6 +163,8 @@ class MediaWorker:
             root.mkdir(parents=True, exist_ok=True)
             if job["type"] == "prepare":
                 output = self.prepare(job, root, event)
+            elif job["type"] == "edited_prepare":
+                output = self.prepare_edited(job, root, event)
             elif job["type"] == "export":
                 output = self.export(job, root, event)
             elif job["type"] == "transcribe":
@@ -243,6 +245,33 @@ class MediaWorker:
             "job_id": jid, "duration_seconds": duration, "file_ref": str((root / "draft.mp4").relative_to(self.directory)),
             "audio_ref": str((root / "audio.wav").relative_to(self.directory)), "metadata": metadata})
         self.db.update_project(pid, {"draft_id": draft["id"], "subtitle_id": None, "export_id": None, "phase": "DRAFT_READY"})
+        self.db.update_job(jid, {"output": {"draft_id": draft["id"]}})
+        track = self.speech_track(pid, draft, root, jid, event, job["input"].get("speech_model"))
+        return {"draft_id": draft["id"], "subtitle_id": track["id"]}
+
+    def prepare_edited(self, job, root, event):
+        pid, jid = job["project_id"], job["id"]
+        item = self.db.doc(pid, job["input"]["edited_video_id"], "edited_video")
+        metadata = item["metadata"]
+        duration = metadata["duration_seconds"]
+        if shutil.disk_usage(root).free < 1024 ** 3:
+            raise AppError("Keep at least 1 GB free for video processing.", "DISK_SPACE")
+        self.stage(jid, "Preparing your finished edit for subtitles")
+        args = [ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-i", self.directory / item["file_ref"]]
+        if not metadata["has_audio"]:
+            args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
+        args += ["-t", str(duration), "-map", "0:v:0", "-map", "0:a:0" if metadata["has_audio"] else "1:a:0",
+            "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease:force_divisible_by=2,pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=0x101216,setsar=1,fps=30,format=yuv420p",
+            "-af", f"aresample=48000,apad,atrim=duration={duration}"]
+        self.command(args + self.encode_args() + ["draft.mp4"], root, event)
+        final_metadata = self.validate_final(root / "draft.mp4", duration, root, event)
+        self.command([ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-i", "draft.mp4", "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "audio.wav"], root, event)
+        draft = self.db.add_doc(pid, "draft", {"plan_id": None, "brief_id": item["brief_id"],
+            "source": "external_edit", "edited_video_id": item["id"], "job_id": jid,
+            "duration_seconds": duration, "file_ref": str((root / "draft.mp4").relative_to(self.directory)),
+            "audio_ref": str((root / "audio.wav").relative_to(self.directory)), "metadata": final_metadata})
+        self.db.update_project(pid, {"plan_id": None, "draft_id": draft["id"], "subtitle_id": None,
+            "export_id": None, "ready_confirmed_at": None, "phase": "DRAFT_READY"})
         self.db.update_job(jid, {"output": {"draft_id": draft["id"]}})
         track = self.speech_track(pid, draft, root, jid, event, job["input"].get("speech_model"))
         return {"draft_id": draft["id"], "subtitle_id": track["id"]}

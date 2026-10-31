@@ -34,7 +34,7 @@ def trendforge_health() -> dict:
 
 @mcp.tool()
 def search_stock_footage(query: str) -> list | dict:
-    """Search optional Pexels stock footage using the owner's server-side key. Keep creator/source credits; ask the creator to choose and import clips in the website."""
+    """Search optional Pixabay or Pexels stock footage using the owner's server-side key. Keep creator/source credits; ask the creator to choose and import clips in the website."""
     return call("GET", "/stock/search?" + urlencode({"query": query}))
 
 

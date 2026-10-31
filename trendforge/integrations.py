@@ -69,7 +69,7 @@ async def generate_ideas(settings, project, sources):
     context = {"niche": project["niche"], "audience": project["audience"], "goal": project["goal"],
                "duration_seconds": project["target_duration_seconds"],
                "writing_language": "Indonesian" if project.get("language") == "id" else "English",
-               "selected_reference_titles": [{"title": x["title"], "video_id": x["video_id"]} for x in sources[:5]]}
+               "selected_reference_titles": [{"title": x["title"], "video_id": x["video_id"]} for x in sources]}
     try:
         return Ideas.model_validate(await provider_json(settings, system, context)).model_dump()["ideas"]
     except ValidationError:
@@ -86,7 +86,7 @@ async def generate_brief(settings, project, idea, sources):
     context = {"niche": project["niche"], "audience": project["audience"], "goal": project["goal"],
                "duration_seconds": project["target_duration_seconds"], "selected_idea": idea,
                "writing_language": "Indonesian" if project.get("language") == "id" else "English",
-               "reference_titles": [x["title"] for x in sources[:5]]}
+               "reference_titles": [x["title"] for x in sources]}
     result = await provider_json(settings, system, context)
     result.update({"expected_project_revision": project["revision"],
                    "source_video_ids": [x["video_id"] for x in sources], "selected_idea_id": idea["id"]})

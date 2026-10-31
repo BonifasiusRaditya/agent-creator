@@ -1,0 +1,123 @@
+import json
+import subprocess
+import time
+
+import httpx
+import pytest
+
+from conftest import approve, brief, project
+from trendforge import integrations
+from trendforge.media import ffmpeg, probe
+
+
+def wait(client, base, job):
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        current = client.get(base + '/jobs/' + job['id']).json()
+        if current['status'] in {'succeeded', 'failed', 'cancelled'}:
+            assert current['status'] == 'succeeded', current
+            return current
+        time.sleep(.15)
+    pytest.fail('Job did not finish')
+
+
+def test_finished_edit_without_assets_or_plan_exports_actual_duration(client, tmp_path):
+    p = project(client, 30)
+    base = f"/api/v1/projects/{p['id']}"
+    b = brief(client, p)
+    approve(client, p['id'], 'briefs', b['id'])
+    clip = tmp_path / 'finished.mp4'
+    subprocess.run([ffmpeg(), '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi',
+        '-i', 'color=c=blue:s=640x360:r=24', '-t', '4', '-c:v', 'libx264', '-preset', 'ultrafast',
+        '-pix_fmt', 'yuv420p', str(clip)], check=True, capture_output=True)
+    missing_rights = client.post(base + '/edited-video', files={'file': ('finished.mp4', clip.read_bytes(), 'video/mp4')})
+    assert missing_rights.status_code == 422
+    upload = client.post(base + '/edited-video', headers={'Idempotency-Key': 'finished-edit-1'},
+        files={'file': ('finished.mp4', clip.read_bytes(), 'video/mp4')}, data={'rights_confirmed': 'true'})
+    assert upload.status_code == 202, upload.text
+    wait(client, base, upload.json())
+    current = client.get(base).json()
+    assert current['assets'] == [] and current['plan'] is None
+    assert current['draft']['source'] == 'external_edit'
+    assert abs(current['draft']['duration_seconds'] - 4) < .1
+    assert current['subtitle']['speech_status'] == 'no_speech'
+    rejected = client.post(base + '/export-jobs', headers={'Idempotency-Key': 'reject-unapproved'}, json={})
+    assert rejected.status_code == 409
+    approve(client, p['id'], 'subtitles', current['subtitle_id'], no_speech_decision=True)
+    exported = client.post(base + '/export-jobs', headers={'Idempotency-Key': 'export-external'}, json={})
+    assert exported.status_code == 202, exported.text
+    result = wait(client, base, exported.json())
+    content = client.get(base + f"/exports/{result['output']['export_id']}/files/mp4?download=true")
+    output = tmp_path / 'output.mp4'
+    output.write_bytes(content.content)
+    metadata = probe(output)
+    assert (metadata['width'], metadata['height']) == (1080, 1920)
+    assert abs(metadata['duration_seconds'] - 4) < .12
+    assert client.get(base).json()['exports'][0]['plan_id'] is None
+
+
+def test_edited_upload_approval_file_validation_and_scope(client):
+    p = project(client)
+    base = f"/api/v1/projects/{p['id']}"
+    payload = {'files': {'file': ('bad.mp4', b'not-video', 'video/mp4')}, 'data': {'rights_confirmed': 'true'}}
+    assert client.post(base + '/edited-video', **payload).status_code == 409
+    b = brief(client, p)
+    approve(client, p['id'], 'briefs', b['id'])
+    assert client.post(base + '/edited-video', **payload).status_code == 422
+    assert client.app.state.db.docs(p['id'], 'edited_video') == []
+    assert client.post(base + '/edited-video-jobs', headers={'Idempotency-Key': 'wrong-id'},
+                       json={'edited_video_id': 'other-project'}).status_code == 404
+
+
+def test_posting_caption_generate_save_stale_and_conflict(client, monkeypatch):
+    monkeypatch.setenv('TRENDFORGE_AI_ENGINE', 'openai_compatible')
+    client.patch('/api/v1/settings', json={'ai_base_url': 'https://test.example/v1', 'ai_model': 'test'})
+    p = project(client)
+    base = f"/api/v1/projects/{p['id']}"
+    assert client.post(base + '/posting-caption/generate', json={}).status_code == 409
+    b = brief(client, p)
+    calls = []
+    def provider(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        assert 'not subtitles' in body['messages'][0]['content']
+        context = json.loads(body['messages'][1]['content'])
+        assert context['brief']['script'] == b['script']
+        return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({'text': 'One focused session. Try it today! #Study'})}}]})
+    actual = httpx.AsyncClient
+    monkeypatch.setattr(integrations.httpx, 'AsyncClient', lambda **kw: actual(transport=httpx.MockTransport(provider), **kw))
+    current = client.get(base).json()
+    generated = client.post(base + '/posting-caption/generate', json={'expected_project_revision': current['revision']})
+    assert generated.status_code == 200, generated.text
+    assert generated.json()['source'] == 'ai'
+    current = client.get(base).json()
+    assert current['posting_caption']['text'].startswith('One focused')
+    assert not current['posting_caption']['stale']
+    assert current['subtitle'] is None
+    saved = client.post(base + '/posting-caption', json={'text': 'My reviewed caption', 'expected_project_revision': current['revision']})
+    assert saved.status_code == 200
+    assert client.post(base + '/posting-caption', json={'text': 'overwrite', 'expected_project_revision': current['revision']}).status_code == 409
+    brief(client, client.get(base).json())
+    assert client.get(base).json()['posting_caption']['stale']
+
+
+@pytest.mark.parametrize('engine', ['workbuddy', 'openai_compatible'])
+def test_more_than_twenty_selected_references_reach_writer(client, monkeypatch, engine):
+    monkeypatch.setenv('TRENDFORGE_AI_ENGINE', engine)
+    p = project(client)
+    refs = [{'video_id': f'ref_{i:07d}', 'title': f'Source {i}'} for i in range(35)]
+    client.app.state.db.add_doc(p['id'], 'research', {'items': refs})
+    ids = [item['video_id'] for item in refs]
+    if engine == 'openai_compatible':
+        client.patch('/api/v1/settings', json={'ai_base_url': 'https://test.example/v1', 'ai_model': 'test'})
+        def provider(request):
+            context = json.loads(json.loads(request.content)['messages'][1]['content'])
+            assert len(context['selected_reference_titles']) == 35
+            return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({'ideas': [
+                {'id': f'idea_{i}', 'title': f'Idea {i}', 'angle': 'A practical angle.', 'hook': 'Try this habit.'} for i in range(3)]})}}]})
+        actual = httpx.AsyncClient
+        monkeypatch.setattr(integrations.httpx, 'AsyncClient', lambda **kw: actual(transport=httpx.MockTransport(provider), **kw))
+    response = client.post(f"/api/v1/projects/{p['id']}/ai/ideas", json={'source_video_ids': ids, 'expected_project_revision': p['revision']})
+    assert response.status_code == (202 if engine == 'workbuddy' else 200), response.text
+    if engine == 'workbuddy': assert response.json()['source_video_ids'] == ids
+    else: assert client.get(f"/api/v1/projects/{p['id']}").json()['idea_source_video_ids'] == ids

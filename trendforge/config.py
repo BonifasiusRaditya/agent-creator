@@ -28,13 +28,15 @@ class Settings:
     defaults = {
         "ai_engine": "workbuddy",
         "ai_base_url": "", "ai_model": "", "ai_api_key": "",
-        "youtube_api_key": "", "pexels_api_key": "", "speech_model": "base",
+        "youtube_api_key": "", "pexels_api_key": "", "pixabay_api_key": "",
+        "stock_provider": "pixabay", "speech_model": "base",
         "password_hash": "", "password_salt": "", "service_token": "",
     }
     env_names = {
         "ai_engine": "TRENDFORGE_AI_ENGINE",
         "ai_base_url": "AI_BASE_URL", "ai_model": "AI_MODEL", "ai_api_key": "AI_API_KEY",
         "youtube_api_key": "YOUTUBE_API_KEY", "pexels_api_key": "PEXELS_API_KEY",
+        "pixabay_api_key": "PIXABAY_API_KEY", "stock_provider": "TRENDFORGE_STOCK_PROVIDER",
         "speech_model": "TRENDFORGE_SPEECH_MODEL",
     }
 
@@ -85,6 +87,9 @@ class Settings:
             "ai_key_configured": bool(self.get("ai_api_key")),
             "youtube_configured": bool(self.get("youtube_api_key")),
             "pexels_configured": bool(self.get("pexels_api_key")),
+            "pixabay_configured": bool(self.get("pixabay_api_key")),
+            "stock_provider": self.get("stock_provider"),
+            "stock_configured": bool(self.get(self.get("stock_provider") + "_api_key")),
             "speech_model": self.get("speech_model"),
             "storage_path": str(self.directory),
             "configuration_sources": {key: self.source(key) for key in self.env_names},

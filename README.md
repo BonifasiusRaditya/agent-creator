@@ -1,6 +1,6 @@
 # TrendForge
 
-A local creator workspace that takes a topic and 3–5 clips through research, a content brief, a timed edit, Indonesian subtitles, and a finished vertical MP4.
+A local creator workspace for finding inspiration, drafting original video scripts and posting captions, and adding Indonesian subtitles. Bring a finished edit from your favorite app, or try the optional built-in video editor.
 
 The interface is in English. Briefs can be written in English or Indonesian. Speech transcription targets Indonesian.
 
@@ -33,11 +33,15 @@ Copy `.env.example` to `.env` in this project folder, then fill in the service k
 TRENDFORGE_AI_ENGINE=workbuddy
 YOUTUBE_API_KEY=your-youtube-data-api-key
 PEXELS_API_KEY=your-optional-pexels-key
+TRENDFORGE_STOCK_PROVIDER=pixabay
+PIXABAY_API_KEY=your-optional-pixabay-key
 ```
 
 `.env` is loaded automatically from the project folder, even when the service is launched from another directory. Restart TrendForge after editing it. Existing process variables override `.env`; `.env` overrides previously saved local settings. An explicit empty value disables a service, including any older saved key. Omitted settings retain their saved value or default. Values are loaded literally, without `${...}` interpolation. Never commit a filled `.env`; it is excluded from source control and contains plaintext secrets.
 
-Enable YouTube Data API v3 for the Google Cloud project that owns the key. YouTube supplies public metadata, not footage. Pexels is optional. Speech recognition runs locally with faster-whisper and needs no API key; select and download a multilingual model in **Connections** once.
+Enable YouTube Data API v3 for the Google Cloud project that owns the key. YouTube supplies public metadata, not footage. Stock footage is optional. Pixabay is the temporary default; get a key at https://pixabay.com/api/docs/ after signing in and set `PIXABAY_API_KEY` in `.env`. Restart, then use **Connections → Pixabay footage → Test connection** and **Footage → Find stock footage**. Do not enter a Pixabay key as `PEXELS_API_KEY`. To switch back later, set `TRENDFORGE_STOCK_PROVIDER=pexels` and configure `PEXELS_API_KEY`; existing imported clips keep their original source credits. There is no silent fallback between providers.
+
+Pixabay searches are cached locally for 24 hours (including across restarts), per its API requirements. Search cards link to Pixabay and creator/source credits remain attached to imports. Eligible clips are 3–120 seconds and at most 100 MiB, with a short edge of at least 360 px and a long edge of at most 1920 px; final codec validation happens on import. Portrait results are preferred when available; landscape footage is fitted by the existing editor. Speech recognition runs locally with faster-whisper and needs no API key; select and download a multilingual model in **Connections** once.
 
 **Creators do not enter API keys in the website.** Connections shows service availability, connection checks, the WorkBuddy setup, and local speech models. Environment-managed values cannot be silently overridden through the settings API. Old encrypted connection settings remain supported as a fallback for existing installations; the interface no longer asks creators to edit them.
 
@@ -57,17 +61,17 @@ Results are schema-checked and tied to the exact project revision and selected r
 
 The optional OpenAI-compatible writing adapter is retained for previously requested compatibility, but is **off by default** and is never a silent fallback. To enable it explicitly, set `TRENDFORGE_AI_ENGINE=openai_compatible`, `AI_BASE_URL`, `AI_MODEL`, and optional `AI_API_KEY` in `.env`. Remote providers require HTTPS; a localhost provider may use HTTP. This path uses `/chat/completions` and validates structured responses.
 
-## Make a video
+## Create your content draft
 
-1. Create a project with a topic, audience, goal, duration, platform, and writing language.
-2. Find YouTube references and optionally select up to five, or use your own topic.
-3. Create ideas with WorkBuddy, choose one, and ask it to develop the brief. Review the script and shot list, then approve the brief. Manual writing is also available.
-4. Confirm your rights to the footage and upload 3–5 clips. Optionally choose eligible Pexels stock footage.
-5. Create an edit plan. Review the timing, sequence and trim points. Approve it and create the draft.
-6. Review the draft and its actual speech transcription. Edit subtitle text/timings, split long cues, or add manual cues after a transcription failure. No-speech results require explicit confirmation.
-7. Approve subtitles, export, preview and download MP4/SRT. Mark the finished video ready to upload after checking it.
+1. Create a project with topic, audience, goal, target duration, platform and writing language.
+2. Find YouTube references across multiple searches. Select as many saved references as you need, or use your own topic.
+3. Generate ideas and develop a brief/script with your configured AI, or write manually. Review and approve the brief.
+4. Draft a posting caption on the Brief page. Generate with the configured writing provider, edit, save and copy it. Copy your script for your own editor.
+5. Optionally collect footage (including Pixabay stock) on Footage. Download clips for your external editor when needed.
+6. On **Footage**, upload a finished edit to go directly to subtitles, or select **Try out our new video editing feature!** to use the existing 3–5-clip editor.
+7. Review the actual speech transcription and approve subtitles (or explicitly confirm no speech), then export MP4/SRT. Your caption remains available on Brief and Export.
 
-The script is a production guide, never a replacement transcript. Automatic editing uses clip lengths and the approved sequence; it does not claim to understand scenes or identify the best visual moments. WorkBuddy orchestrates production; FFmpeg performs video processing, and faster-whisper transcribes the assembled audio locally.
+You can stop after the brief and posting caption. Video assembly is optional. The built-in editor uses clip lengths and your approved sequence; it does not identify the best scenes. Uploaded finished edits keep their actual duration and cut sequence; we only normalize the output profile for subtitle export.
 
 ## Media limits
 
@@ -96,7 +100,7 @@ The official MCP client has verified stdio initialization, tool discovery and re
 - FastAPI serves the browser interface and API. SQLite stores projects, revisions, approvals, jobs, and events.
 - Clips, drafts, subtitle files, exports, models, and encrypted connection settings are stored in `.data/` by default. This folder is excluded from source control.
 - Files follow the device's folder-sync settings. The current project is inside OneDrive; choose a non-synced location through `TRENDFORGE_DATA_DIR` if you want to keep runtime files out of folder synchronization.
-- WorkBuddy receives project context, selected reference metadata and structured tool results. Uploaded video binaries are not included in writing requests. Its account and conversation retention follow WorkBuddy settings. The optional alternative writing provider receives writing context only when explicitly enabled. YouTube and Pexels receive their respective research queries.
+- WorkBuddy receives project context, selected reference metadata and structured tool results. Uploaded video binaries are not included in writing requests. Its account and conversation retention follow WorkBuddy settings. The optional alternative writing provider receives writing context only when explicitly enabled. YouTube and the selected stock provider (Pixabay or Pexels) receive their respective search queries. Pixabay search metadata is cached under `.data/cache/stock/pixabay/` for 24 hours; credentials are not stored in those cache files.
 - Deleting a project removes its application-managed files and records. Separately downloaded copies and WorkBuddy conversations are outside that deletion.
 - YouTube metadata is removed after 30 days, including saved reference IDs. Diagnostic job logs expire after seven days. An automatic cleanup runs while the service is open and at startup.
 
@@ -142,3 +146,11 @@ Public hosting, multi-user access, automatic social publishing, video generation
 
 See `docs/IMPLEMENTATION.md` for architecture, endpoint groups, and verification details. The original requirements remain in `PRD.md`.
 
+
+## Inspiration-first workflow
+
+Discover, scripts and posting captions are the core workflow. Reference selections are no longer capped at five (all selected saved references are sent to the writing provider; its context limit still applies). Searches accumulate in Discover. Pixabay remains the default stock provider.
+
+After approving a brief, open **Footage**: upload a finished H.264 MP4/MOV edit (3–120 seconds, up to 100 MiB, 360–1920 px), or choose **Try out our new video editing feature!** to open the optional Edit phase and its existing 3–5-clip editor. Finished edits retain their actual duration, sequence and cuts; encoding fits them to 1080×1920/30fps without cropping. Subtitle review and export work with either path. A finished edit can be uploaded without uploading raw clips or creating an edit plan.
+
+The Brief and Export screens include an editable, saved posting-caption draft with copy support. The configured OpenAI-compatible provider (including Gemini) can generate captions from the saved brief in the project language. WorkBuddy users can paste captions manually. Caption drafts are marked for review when their source brief changes; captions are never published automatically.
