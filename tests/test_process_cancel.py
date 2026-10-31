@@ -7,7 +7,7 @@ from trendforge.media import Cancelled
 
 
 def test_cancellation_stops_an_actual_running_subprocess(client, tmp_path, monkeypatch):
-    worker = client.app.state.worker
+    worker = client.app.state.worker.media
     event = threading.Event()
     processes, errors = [], []
     actual_popen = subprocess.Popen

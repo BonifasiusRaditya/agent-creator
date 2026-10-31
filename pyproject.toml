@@ -16,10 +16,14 @@ dependencies = [
   "mcp>=1.12,<2",
   "python-dotenv>=1,<2",
   "libsql>=0.1.11,<0.2",
+  "boto3>=1.35,<2",
 ]
 
 [dependency-groups]
-dev = ["pytest>=8,<10"]
+dev = [
+    "moto[s3]>=5,<6",
+    "pytest>=8,<10",
+]
 
 [project.scripts]
 trendforge = "trendforge.cli:main"

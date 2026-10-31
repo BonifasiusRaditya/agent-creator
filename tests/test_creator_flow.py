@@ -5,7 +5,7 @@ import time
 import httpx
 import pytest
 
-from conftest import approve, brief, project
+from conftest import approve, brief, project, upload_video
 from trendforge import integrations
 from trendforge.media import ffmpeg, probe
 
@@ -30,12 +30,11 @@ def test_finished_edit_without_assets_or_plan_exports_actual_duration(client, tm
     subprocess.run([ffmpeg(), '-hide_banner', '-loglevel', 'error', '-y', '-f', 'lavfi',
         '-i', 'color=c=blue:s=640x360:r=24', '-t', '4', '-c:v', 'libx264', '-preset', 'ultrafast',
         '-pix_fmt', 'yuv420p', str(clip)], check=True, capture_output=True)
-    missing_rights = client.post(base + '/edited-video', files={'file': ('finished.mp4', clip.read_bytes(), 'video/mp4')})
+    missing_rights = client.post(base + '/uploads', json={'filename': 'finished.mp4', 'size': 10, 'purpose': 'finished_edit'})
     assert missing_rights.status_code == 422
-    upload = client.post(base + '/edited-video', headers={'Idempotency-Key': 'finished-edit-1'},
-        files={'file': ('finished.mp4', clip.read_bytes(), 'video/mp4')}, data={'rights_confirmed': 'true'})
-    assert upload.status_code == 202, upload.text
-    wait(client, base, upload.json())
+    upload = upload_video(client, p['id'], clip, 'finished.mp4', purpose='finished_edit')
+    assert upload['edited_video_id'] and upload['job_id']
+    wait(client, base, {'id': upload['job_id']})
     current = client.get(base).json()
     assert current['assets'] == [] and current['plan'] is None
     assert current['draft']['source'] == 'external_edit'
@@ -59,11 +58,14 @@ def test_finished_edit_without_assets_or_plan_exports_actual_duration(client, tm
 def test_edited_upload_approval_file_validation_and_scope(client):
     p = project(client)
     base = f"/api/v1/projects/{p['id']}"
-    payload = {'files': {'file': ('bad.mp4', b'not-video', 'video/mp4')}, 'data': {'rights_confirmed': 'true'}}
-    assert client.post(base + '/edited-video', **payload).status_code == 409
+    request = {'filename': 'bad.mp4', 'size': 9, 'purpose': 'finished_edit', 'rights_confirmed': True}
+    assert client.post(base + '/uploads', json=request).status_code == 409  # Brief not approved yet.
     b = brief(client, p)
     approve(client, p['id'], 'briefs', b['id'])
-    assert client.post(base + '/edited-video', **payload).status_code == 422
+    assert client.post(base + '/uploads', json={**request, 'filename': 'notes.txt'}).status_code == 422
+    assert client.post(base + '/uploads', json={**request, 'size': 101 * 1024 * 1024}).status_code == 413
+    rejected = upload_video(client, p['id'], b'not-video', 'bad.mp4', purpose='finished_edit', expect='rejected')
+    assert rejected['error']['code'] == 'INVALID_MEDIA'
     assert client.app.state.db.docs(p['id'], 'edited_video') == []
     assert client.post(base + '/edited-video-jobs', headers={'Idempotency-Key': 'wrong-id'},
                        json={'edited_video_id': 'other-project'}).status_code == 404
@@ -102,17 +104,19 @@ def test_posting_caption_generate_save_stale_and_conflict(client, monkeypatch):
 
 
 @pytest.mark.parametrize('engine', ['workbuddy', 'openai_compatible'])
-def test_more_than_twenty_selected_references_reach_writer(client, monkeypatch, engine):
+def test_up_to_ten_selected_references_reach_writer(client, monkeypatch, engine):
     monkeypatch.setenv('TRENDFORGE_AI_ENGINE', engine)
     p = project(client)
     refs = [{'video_id': f'ref_{i:07d}', 'title': f'Source {i}'} for i in range(35)]
     client.app.state.db.add_doc(p['id'], 'research', {'items': refs})
-    ids = [item['video_id'] for item in refs]
+    rejected = client.post(f"/api/v1/projects/{p['id']}/ai/ideas", json={'source_video_ids': [x['video_id'] for x in refs], 'expected_project_revision': p['revision']})
+    assert rejected.status_code == 422 and rejected.json()['error']['code'] == 'TOO_MANY_REFERENCES'
+    ids = [item['video_id'] for item in refs[:10]]
     if engine == 'openai_compatible':
         client.patch('/api/v1/settings', json={'ai_base_url': 'https://test.example/v1', 'ai_model': 'test'})
         def provider(request):
             context = json.loads(json.loads(request.content)['messages'][1]['content'])
-            assert len(context['selected_reference_titles']) == 35
+            assert len(context['selected_reference_titles']) == 10
             return httpx.Response(200, json={'choices': [{'message': {'content': json.dumps({'ideas': [
                 {'id': f'idea_{i}', 'title': f'Idea {i}', 'angle': 'A practical angle.', 'hook': 'Try this habit.'} for i in range(3)]})}}]})
         actual = httpx.AsyncClient

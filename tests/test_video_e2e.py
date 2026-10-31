@@ -1,11 +1,45 @@
+import json
 import subprocess
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
 
-from conftest import approve, brief, project
+from conftest import approve, brief, project, upload_video
 from trendforge.media import ffmpeg, probe
+
+RESULTS = Path(__file__).resolve().parent.parent / "test-results" / "e2e-timings"
+
+
+class StageTimer:
+    """Records wall time and database connections per E2E stage."""
+
+    def __init__(self, db):
+        self.db, self.stages, self.connections = db, {}, 0
+        original = db.connect
+
+        @contextmanager
+        def counted():
+            outer = getattr(db.context, "connection", None) is None
+            with original() as c:
+                if outer:
+                    self.connections += 1
+                yield c
+        db.connect = counted
+
+    @contextmanager
+    def stage(self, name):
+        start, before = time.perf_counter(), self.connections
+        yield
+        self.stages[name] = {"seconds": round(time.perf_counter() - start, 3), "db_connections": self.connections - before}
+
+    def save(self, label):
+        RESULTS.mkdir(parents=True, exist_ok=True)
+        report = {"label": label, "backend": self.db.backend, "total_seconds": round(sum(s["seconds"] for s in self.stages.values()), 3),
+                  "total_db_connections": self.connections, "stages": self.stages}
+        (RESULTS / f"{label}.json").write_text(json.dumps(report, indent=2))
+        print("\n" + json.dumps(report, indent=2))
 
 
 def wait_job(c, pid, jid, timeout=240):
@@ -20,14 +54,12 @@ def wait_job(c, pid, jid, timeout=240):
 
 
 @pytest.mark.parametrize("count,target", [(3, 30), (5, 60)])
-def test_real_upload_prepare_subtitle_export_download_delete(client, tmp_path, count, target):
-    p = project(client, target)
-    pid = p["id"]
-    base = f"/api/v1/projects/{pid}"
-    b = brief(client, p)
-    approve(client, pid, "briefs", b["id"])
+def test_real_upload_prepare_subtitle_export_download_delete(backend_client, tmp_path, count, target):
+    client = backend_client
+    timer = StageTimer(client.app.state.db)
     length = target / count
     colors = ["0xA6B6D9", "0x6F8BC4", "0xB9C7E4", "0x8696B2", "0xCED6E8"]
+    clips = []
     for index in range(count):
         clip = tmp_path / f"test-{index}.mp4"
         # Synthetic, test-owned images and silence: no real footage or invented speech.
@@ -39,71 +71,86 @@ def test_real_upload_prepare_subtitle_export_download_delete(client, tmp_path, c
         if index % 2:
             args += ["-c:a", "aac"]
         subprocess.run(args + [str(clip)], check=True, capture_output=True)
-        with clip.open("rb") as f:
-            response = client.post(base + "/assets", files={"file": (clip.name, f, "video/mp4")}, data={"rights_confirmed": "true"})
-        assert response.status_code == 201, response.text
-    p = client.get(base).json()
-    plan = client.post(base + "/plans/auto", json={"expected_project_revision": p["revision"]})
-    assert plan.status_code == 201, plan.text
-    approve(client, pid, "plans", plan.json()["id"])
-    headers = {"Idempotency-Key": "test-prepare-request"}
-    start = client.post(base + "/prepare-jobs", headers=headers, json={"plan_id": plan.json()["id"]})
-    assert start.status_code == 202, start.text
-    jid = start.json()["id"]
-    duplicate = client.post(base + "/prepare-jobs", headers=headers, json={"plan_id": plan.json()["id"]})
-    assert duplicate.status_code == 202 and duplicate.json()["id"] == jid
-    assert client.patch(base, json={"goal": "Not while processing"}).status_code == 409
-    wait_job(client, pid, jid)
-    p = client.get(base).json()
-    assert p["subtitle"]["speech_status"] == "no_speech"
-    assert p["subtitle"]["cues"] == []
-    rejected = client.post(base + f"/subtitles/{p['subtitle_id']}/approve", json={"expected_project_revision": p["revision"], "confirmation": True})
-    assert rejected.status_code == 422
-    approve(client, pid, "subtitles", p["subtitle_id"], no_speech_decision=True)
-    exported = client.post(base + "/export-jobs", headers={"Idempotency-Key": "test-export-request"}, json={})
-    assert exported.status_code == 202
-    job = wait_job(client, pid, exported.json()["id"])
-    eid = job["output"]["export_id"]
-    assert client.post(base + "/ready-confirmation", json={"export_id": eid, "confirmation": True}).status_code == 422
-    download = client.get(base + f"/exports/{eid}/files/mp4?download=true")
-    assert download.status_code == 200 and len(download.content) > 5000
-    saved = tmp_path / "finished.mp4"
-    saved.write_bytes(download.content)
-    meta = probe(saved)
-    assert (meta["width"], meta["height"], meta["fps"]) == (1080, 1920, 30)
-    assert abs(meta["duration_seconds"] - target) <= 0.12
-    assert meta["video_codec"] == "h264" and meta["audio_codec"] == "aac"
-    assert meta["sample_rate"] == 48000 and meta["audio_channels"] == 2
-    ready = client.post(base + "/ready-confirmation", json={"export_id": eid, "confirmation": True})
-    assert ready.status_code == 200 and ready.json()["phase"] == "USER_CONFIRMED_READY"
-    assert client.get(base + f"/exports/{eid}/files/srt").status_code == 404
-    if count == 3:
-        # Exercise the actual subtitle renderer independently from ASR accuracy.
-        p = client.get(base).json()
-        captions = client.post(base + "/subtitles", json={"draft_id": p["draft_id"],
-            "cues": [{"id": "render-test", "start_seconds": 1, "end_seconds": 4, "text": "Subtitle rendering test."}],
-            "speech_status": "speech", "expected_project_revision": p["revision"]})
-        assert captions.status_code == 201, captions.text
-        approve(client, pid, "subtitles", captions.json()["id"])
-        second = client.post(base + "/export-jobs", headers={"Idempotency-Key": "test-caption-export"}, json={})
-        second_job = wait_job(client, pid, second.json()["id"])
-        second_id = second_job["output"]["export_id"]
-        srt = client.get(base + f"/exports/{second_id}/files/srt?download=true")
-        assert "Subtitle rendering test." in srt.text
-        rendered = client.get(base + f"/exports/{second_id}/files/mp4?download=true")
-        rendered_path = tmp_path / "with-subtitles.mp4"
-        rendered_path.write_bytes(rendered.content)
-        import av
-        import numpy as np
-        with av.open(str(rendered_path)) as video:
-            frame = next(f for f in video.decode(video=0) if float(f.time or 0) >= 2)
-            image = frame.to_ndarray(format="rgb24")
-        assert np.all(image[1400:1650, 108:972] > 235, axis=2).sum() > 100, "No rendered subtitle text found"
-        versions = client.get(base + "/exports").json()
-        assert len(versions) == 2
-        assert sum(v["current"] for v in versions) == 1
-    p = client.get(base).json()
-    deleted = client.request("DELETE", base, json={"confirmation": True, "expected_project_revision": p["revision"]})
-    assert deleted.status_code == 204, deleted.text
-    assert client.get(base).status_code == 404
+        clips.append(clip)
 
+    with timer.stage("project_brief_approval"):
+        p = project(client, target)
+        pid = p["id"]
+        base = f"/api/v1/projects/{pid}"
+        b = brief(client, p)
+        approve(client, pid, "briefs", b["id"])
+    with timer.stage("upload_assets"):
+        for clip in clips:
+            upload_video(client, pid, clip, clip.name)
+    with timer.stage("plan_create_approve"):
+        p = client.get(base).json()
+        plan = client.post(base + "/plans/auto", json={"expected_project_revision": p["revision"]})
+        assert plan.status_code == 201, plan.text
+        approve(client, pid, "plans", plan.json()["id"])
+    with timer.stage("prepare_job"):
+        headers = {"Idempotency-Key": "test-prepare-request"}
+        start = client.post(base + "/prepare-jobs", headers=headers, json={"plan_id": plan.json()["id"]})
+        assert start.status_code == 202, start.text
+        jid = start.json()["id"]
+        duplicate = client.post(base + "/prepare-jobs", headers=headers, json={"plan_id": plan.json()["id"]})
+        assert duplicate.status_code == 202 and duplicate.json()["id"] == jid
+        assert client.patch(base, json={"goal": "Not while processing"}).status_code == 409
+        wait_job(client, pid, jid)
+    with timer.stage("subtitle_review"):
+        p = client.get(base).json()
+        assert p["subtitle"]["speech_status"] == "no_speech"
+        assert p["subtitle"]["cues"] == []
+        rejected = client.post(base + f"/subtitles/{p['subtitle_id']}/approve", json={"expected_project_revision": p["revision"], "confirmation": True})
+        assert rejected.status_code == 422
+        approve(client, pid, "subtitles", p["subtitle_id"], no_speech_decision=True)
+    with timer.stage("export_job"):
+        exported = client.post(base + "/export-jobs", headers={"Idempotency-Key": "test-export-request"}, json={})
+        assert exported.status_code == 202
+        job = wait_job(client, pid, exported.json()["id"])
+        eid = job["output"]["export_id"]
+    with timer.stage("download_validate_ready"):
+        assert client.post(base + "/ready-confirmation", json={"export_id": eid, "confirmation": True}).status_code == 422
+        download = client.get(base + f"/exports/{eid}/files/mp4?download=true")
+        assert download.status_code == 200 and len(download.content) > 5000
+        saved = tmp_path / "finished.mp4"
+        saved.write_bytes(download.content)
+        meta = probe(saved)
+        assert (meta["width"], meta["height"], meta["fps"]) == (1080, 1920, 30)
+        assert abs(meta["duration_seconds"] - target) <= 0.12
+        assert meta["video_codec"] == "h264" and meta["audio_codec"] == "aac"
+        assert meta["sample_rate"] == 48000 and meta["audio_channels"] == 2
+        ready = client.post(base + "/ready-confirmation", json={"export_id": eid, "confirmation": True})
+        assert ready.status_code == 200 and ready.json()["phase"] == "USER_CONFIRMED_READY"
+        assert client.get(base + f"/exports/{eid}/files/srt").status_code == 404
+    if count == 3:
+        with timer.stage("subtitle_burn_in_export"):
+            # Exercise the actual subtitle renderer independently from ASR accuracy.
+            p = client.get(base).json()
+            captions = client.post(base + "/subtitles", json={"draft_id": p["draft_id"],
+                "cues": [{"id": "render-test", "start_seconds": 1, "end_seconds": 4, "text": "Subtitle rendering test."}],
+                "speech_status": "speech", "expected_project_revision": p["revision"]})
+            assert captions.status_code == 201, captions.text
+            approve(client, pid, "subtitles", captions.json()["id"])
+            second = client.post(base + "/export-jobs", headers={"Idempotency-Key": "test-caption-export"}, json={})
+            second_job = wait_job(client, pid, second.json()["id"])
+            second_id = second_job["output"]["export_id"]
+            srt = client.get(base + f"/exports/{second_id}/files/srt?download=true")
+            assert "Subtitle rendering test." in srt.text
+            rendered = client.get(base + f"/exports/{second_id}/files/mp4?download=true")
+            rendered_path = tmp_path / "with-subtitles.mp4"
+            rendered_path.write_bytes(rendered.content)
+            import av
+            import numpy as np
+            with av.open(str(rendered_path)) as video:
+                frame = next(f for f in video.decode(video=0) if float(f.time or 0) >= 2)
+                image = frame.to_ndarray(format="rgb24")
+            assert np.all(image[1400:1650, 108:972] > 235, axis=2).sum() > 100, "No rendered subtitle text found"
+            versions = client.get(base + "/exports").json()
+            assert len(versions) == 2
+            assert sum(v["current"] for v in versions) == 1
+    with timer.stage("delete_project"):
+        p = client.get(base).json()
+        deleted = client.request("DELETE", base, json={"confirmation": True, "expected_project_revision": p["revision"]})
+        assert deleted.status_code == 204, deleted.text
+        assert client.get(base).status_code == 404
+    timer.save(f"{client.app.state.db.backend}-{count}clips-{target}s")

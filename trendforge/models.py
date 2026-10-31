@@ -3,6 +3,16 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+# Upload limits per file and per project (MVP design limits, see PRD 2.1).
+MAX_FILE = 100 * 1024 * 1024
+MAX_TOTAL = 500 * 1024 * 1024
+
+# Selected YouTube references sent as writing context. Keeps the model's input
+# within its context window; extra references are rejected, never silently cut.
+MAX_REFERENCES = 10
+# Only these reference fields reach an AI model (no thumbnails, statistics or channel IDs).
+REFERENCE_CONTEXT_FIELDS = ("video_id", "title", "channel_title", "published_at", "duration_seconds", "watch_url")
+
 
 class Model(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True, allow_inf_nan=False)

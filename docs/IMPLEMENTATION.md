@@ -10,7 +10,10 @@ FastAPI project service ── SQLite documents, versions, jobs and events
     ├─ HTTPX → OpenAI-compatible writing adapter (explicit optional mode only)
     ├─ HTTPX → YouTube Data API v3
     ├─ HTTPX → Pexels, when configured
-    └─ one media worker
+    ├─ object storage: local data folder, or Tencent COS (signed direct upload/download)
+    └─ job queue in the database (leases, heartbeats, cancellation)
+         ↓ claimed by the video worker (embedded, or `python -m trendforge.worker` / Dockerfile.worker)
+         ├─ ingest lane: validates uploads and stock clips (PyAV probe, limits, SHA-256)
          ├─ FFmpeg subprocesses → normalize, trim, combine, fade, encode
          ├─ PyAV → media metadata validation
          ├─ isolated faster-whisper subprocess → actual speech cues
@@ -56,11 +59,11 @@ Automatic cuts are timing-based. The application does not claim visual scene und
 
 ## Endpoint groups
 
-The live OpenAPI schema is available at `/openapi.json`, and interactive API documentation at `/docs`. Authenticated mutations require a session CSRF token, or a connector bearer token for the operations assigned to it.
+The live OpenAPI schema is available at `/openapi.json`, and interactive API documentation at `/docs`. Authenticated mutations require a session CSRF token, or a personal connector bearer token for the operations assigned to it. Every `/api/v1/projects/{id}/…` route is checked once in middleware against the signed-in user (or the token's owner); another user's project responds as not found.
 
 | Group | Main routes |
 |---|---|
-| Session | `GET/POST/DELETE /api/v1/session`, `POST /api/v1/setup` |
+| Accounts | `GET/POST/DELETE /api/v1/session` (username + password), `POST /api/v1/auth/register` (invite code), `POST /api/v1/auth/password`, `GET/POST /api/v1/tokens`, `DELETE /api/v1/tokens/{id}` |
 | Connections | `GET/PATCH /api/v1/settings`, test, connector configuration, speech-model download |
 | Projects | `GET/POST /api/v1/projects`, `GET/PATCH/DELETE /api/v1/projects/{id}` |
 | Research/writing | research runs, agent requests/context/schema/cancel/result, optional AI adapter, manual brief revisions, operator approval |

@@ -15,7 +15,7 @@ uv sync --python 3.12 --group dev
 uv run trendforge
 ```
 
-Alternatively, run `start.ps1` in PowerShell. Open **http://127.0.0.1:8765** and create your own workspace password. The service listens only on this device.
+Alternatively, run `start.ps1` in PowerShell. Open **http://127.0.0.1:8765** and create an account (see **Accounts** below). The service listens only on this device.
 
 For another port:
 
@@ -25,13 +25,35 @@ uv run trendforge --port 8767
 
 Keep one server instance per data folder. Stop the service with Ctrl+C before restarting it.
 
+## Accounts
+
+Each creator has a username and password, and sees only their own projects, footage, exports and WorkBuddy requests. Accounts are stored in the database (Turso or SQLite), so the same account works from any device that reaches the server.
+
+```dotenv
+TRENDFORGE_INVITE_CODE=a-long-random-shared-code
+TRENDFORGE_ADMIN_USERNAMES=your-username
+```
+
+- **Registration** requires the shared invite code. Leave `TRENDFORGE_INVITE_CODE` empty to close registration; existing accounts can still sign in.
+- **Usernames** are 3–32 letters, numbers, dots, dashes or underscores, case-insensitive. Passwords are 8–200 characters, stored only as scrypt hashes.
+- **Sign-in protection:** five failed attempts lock that username for 15 minutes; wrong invite codes are limited workspace-wide. Error messages do not reveal whether a username exists.
+- **Admins** (listed in `TRENDFORGE_ADMIN_USERNAMES`) change shared workspace settings such as the speech model. Other creators see those settings read-only.
+- **Change password** in Connections → Your account. Your other devices are signed out.
+
+**Upgrading an existing workspace.** The old single workspace password is no longer used, and projects created before accounts have no owner, so no account sees them. Register your account, stop the server, then assign those projects to it:
+
+```powershell
+uv run python -m scripts.claim_projects --username your-username          # preview
+uv run python -m scripts.claim_projects --username your-username --apply
+```
+
 ## Turso database
 
 Set `TURSO_DATABASE_URL` and `TURSO_AUTH_TOKEN` in the project `.env`. `db.py` automatically selects Turso when either setting is nonempty and requires both valid values; connection failures never fall back to SQLite. `TRENDFORGE_DATABASE_BACKEND=sqlite` explicitly selects local storage for isolated tests or local operation. `turso` explicitly requires the remote database. The official `libsql` Python driver is locked in `uv.lock`.
 
-The backend creates the five application tables and indexes with `IF NOT EXISTS`. Queries use bound parameters; nested database contexts share the same transaction. Login passwords, service tokens and encrypted settings remain in the local data folder. Database sessions and project records live in the selected database; video files/models remain on disk. Keep one application instance per workspace.
+The backend creates its tables and indexes with `IF NOT EXISTS` and adds new columns to existing databases in place. Queries use bound parameters; nested database contexts share the same transaction. Accounts (hashed passwords), sessions, connector tokens (hashed) and project records live in the selected database; encrypted legacy settings, video files and models remain on disk. Keep one application instance per workspace.
 
-An already running server must be restarted to load the database changes. For an existing workspace, stop it before migration. Preview with `uv run python -m scripts.migrate_to_turso`. After approval to transfer project metadata, `uv run python -m scripts.migrate_to_turso --apply` backs up the local database, copies projects/documents/jobs/events into an empty remote workspace in one transaction, and checks row counts. It refuses nonempty destinations or active local jobs. Existing login sessions are not exported. The original database and local media remain; sign in again after switching.
+An already running server must be restarted to load the database changes. For an existing workspace, stop it before migration. Preview with `uv run python -m scripts.migrate_to_turso`. After approval to transfer project metadata, `uv run python -m scripts.migrate_to_turso --apply` backs up the local database, copies accounts, connector tokens, projects, documents, jobs and events into an empty remote workspace in one transaction, and checks row counts. It refuses nonempty destinations or active local jobs. Existing login sessions are not exported. The original database and local media remain; sign in again after switching.
 
 ## Configure services once
 
@@ -72,7 +94,7 @@ The optional OpenAI-compatible writing adapter is retained for previously reques
 ## Create your content draft
 
 1. Create a project with topic, audience, goal, target duration, platform and writing language.
-2. Find YouTube references across multiple searches. Select as many saved references as you need, or use your own topic.
+2. Find YouTube references across multiple searches. Select up to 10 saved references, or use your own topic.
 3. Generate ideas and develop a brief/script with your configured AI, or write manually. Review and approve the brief.
 4. Draft a posting caption on the Brief page. Generate with the configured writing provider, edit, save and copy it. Copy your script for your own editor.
 5. Optionally collect footage (including Pixabay stock) on Footage. Download clips for your external editor when needed.
@@ -99,14 +121,22 @@ HEVC and 4K footage should be converted before uploading. Speech quality depends
 
 ## Connector setup and verification
 
-`workbuddy/mcp.json` contains this installation's local configuration; regenerate it through Connections after moving folders or changing the port/data directory. The downloadable package includes metadata, an icon, configuration and the agent skill. No provider credentials or service tokens are included. The connector reads its service token from the private local settings at runtime.
+`workbuddy/mcp.json` is a template. Create your real configuration in **Connections → Create connector configuration** (or **Download connector**): each one contains a new **personal connector token** (`TRENDFORGE_TOKEN`) that acts only on your projects, cannot approve anything, and cannot create more tokens. Treat it like a password; revoke unused or exposed tokens under **Connector tokens**. The package includes metadata, an icon, configuration and the agent skill, and no provider credentials.
 
 The official MCP client has verified stdio initialization, tool discovery and real backend calls. Installation, login and actual generation inside your WorkBuddy account still need to be completed in WorkBuddy; protocol tests do not imply an authenticated WorkBuddy session.
 
+## Video storage, worker and backups
+
+Videos are stored in the local data folder (`TRENDFORGE_STORAGE_BACKEND=local`, default) or in **Tencent Cloud Object Storage** (`cos`). With COS, the browser uploads straight to the bucket with a short-lived signed form (COS itself refuses files over 100 MiB) and plays/downloads through 15-minute signed links; credentials stay on the server.
+
+Video work runs in a **worker** that takes jobs from a queue in the database. Locally it runs inside the website process (`TRENDFORGE_WORKER=embedded`). For online use, run it separately with `uv run python -m trendforge.worker` or the `Dockerfile.worker` container. Every upload is checked by the worker (format, codec, size, duration, checksum) before it joins the project; the Footage page shows "Checking video…" meanwhile. Each project runs one video job at a time; other projects queue instead of being refused. A crashed worker's job is marked interrupted within about a minute; queued work survives restarts.
+
+Back up the database and all stored videos with `uv run python -m scripts.backup` (incremental) and restore into an empty database and storage with `uv run python -m scripts.restore`, which verifies checksums. COS setup (bucket, CORS, versioning), migrating existing local videos, scheduling backups and the restore drill are described in `docs/OPERATIONS.md`.
+
 ## Storage and privacy
 
-- FastAPI serves the browser interface and API. SQLite stores projects, revisions, approvals, jobs, and events.
-- Clips, drafts, subtitle files, exports, models, and encrypted connection settings are stored in `.data/` by default. This folder is excluded from source control.
+- FastAPI serves the browser interface and API. The database (Turso or SQLite) stores accounts, projects, revisions, approvals, the job queue and events.
+- Clips, drafts, subtitle files and exports are stored in `.data/` by default, or in your COS bucket when configured. Speech models, worker logs and encrypted legacy settings stay in the local data folder. This folder is excluded from source control.
 - Files follow the device's folder-sync settings. The current project is inside OneDrive; choose a non-synced location through `TRENDFORGE_DATA_DIR` if you want to keep runtime files out of folder synchronization.
 - WorkBuddy receives project context, selected reference metadata and structured tool results. Uploaded video binaries are not included in writing requests. Its account and conversation retention follow WorkBuddy settings. The optional alternative writing provider receives writing context only when explicitly enabled. YouTube and the selected stock provider (Pixabay or Pexels) receive their respective search queries. Pixabay search metadata is cached under `.data/cache/stock/pixabay/` for 24 hours; credentials are not stored in those cache files.
 - Deleting a project removes its application-managed files and records. Separately downloaded copies and WorkBuddy conversations are outside that deletion.
@@ -120,7 +150,7 @@ $env:FFMPEG_BINARY = 'C:\path\to\ffmpeg.exe'
 uv run trendforge
 ```
 
-Use the new folder's own setup password and connector configuration. Do not point two active server instances at the same data folder.
+Use that database's own accounts and a new connector configuration. Do not point two active server instances at the same data folder.
 
 ## Checks
 
@@ -144,11 +174,12 @@ The app has also been exercised through the browser from project creation throug
 - **WorkBuddy task waiting:** open WorkBuddy, enable the connector, and paste the saved task. The website cannot execute WorkBuddy on its own.
 - **Service unavailable:** the workspace owner checks `.env` and enabled APIs, then restarts the service. Saved work and manual writing remain available.
 - **Speech step failed:** download/check the model, then retry transcription from the existing valid draft. You can enter reviewed subtitle cues manually.
-- **Job interrupted:** restart the service. Interrupted work is marked failed, not falsely complete. Retry from the saved plan or draft.
+- **Job interrupted:** restart the service or the worker. Interrupted work is marked failed, not falsely complete. Retry from the saved plan or draft.
+- **Video worker offline:** Connections shows the worker's status. Uploads and video jobs wait in the queue and run when it is back.
 - **Cancel:** stops processing while preserving uploaded clips and valid checkpoints. This is not byte-level pause/resume.
 - **File rejected:** follow the format/size/duration message and convert the source before re-uploading.
 - **Low disk space:** remove projects you no longer need, then retry. The app does not silently delete your active footage.
-- **Media failure details:** the job's `process.log` is stored locally under `.data/jobs/<job-id>/`. It is not sent to the AI provider.
+- **Media failure details:** the job's `process.log` stays with the worker (`.data/jobs/<job-id>/`, or `logs/<job-id>.log` in the worker folder when videos are in COS). It is not sent to the AI provider.
 
 Public hosting, multi-user access, automatic social publishing, video generation, and voice cloning are not included. Text-to-speech is optional in the PRD and is not exposed as an unfinished control.
 
@@ -157,7 +188,7 @@ See `docs/IMPLEMENTATION.md` for architecture, endpoint groups, and verification
 
 ## Inspiration-first workflow
 
-Discover, scripts and posting captions are the core workflow. Reference selections are no longer capped at five (all selected saved references are sent to the writing provider; its context limit still applies). Searches accumulate in Discover. Pixabay remains the default stock provider.
+Discover, scripts and posting captions are the core workflow. Up to 10 saved references can be selected per writing request, from any of your searches, so requests stay within the model's context. Larger selections are rejected with a clear message rather than silently cut. Only compact reference metadata (ID, title, channel, publish date, duration, link) is sent to the writing provider or WorkBuddy; thumbnails and statistics are not. Briefs saved before this limit keep their original references when edited. Searches accumulate in Discover. Pixabay remains the default stock provider.
 
 After approving a brief, open **Footage**: upload a finished H.264 MP4/MOV edit (3–120 seconds, up to 100 MiB, 360–1920 px), or choose **Try out our new video editing feature!** to open the optional Edit phase and its existing 3–5-clip editor. Finished edits retain their actual duration, sequence and cuts; encoding fits them to 1080×1920/30fps without cropping. Subtitle review and export work with either path. A finished edit can be uploaded without uploading raw clips or creating an edit plan.
 

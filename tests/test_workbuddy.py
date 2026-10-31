@@ -14,7 +14,12 @@ def brief_result():
 
 
 def connector_headers(c):
-    return {"Authorization": "Bearer " + c.app.state.settings.get("service_token")}
+    """A personal connector token for the client's signed-in user (created once per client)."""
+    if not hasattr(c, "connector_token"):
+        response = c.post("/api/v1/tokens", json={"label": "Test connector"})
+        assert response.status_code == 201, response.text
+        c.connector_token = response.json()["token"]
+    return {"Authorization": "Bearer " + c.connector_token}
 
 
 def test_workbuddy_request_to_review_without_another_ai_provider(client):

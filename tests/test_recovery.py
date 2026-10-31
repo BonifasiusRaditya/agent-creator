@@ -10,9 +10,11 @@ from trendforge.errors import AppError
 def test_interrupted_jobs_and_request_identity_survive_model_changes(client):
     p = project(client)
     db = client.app.state.db
+    client.app.state.worker.stop()  # Hold the job so this test plays the worker's part.
     job, fresh = db.start_job(p["id"], "prepare", {"plan_id": "plan_test", "speech_model": "base"}, "same-request")
     assert fresh
     assert client.patch(f"/api/v1/projects/{p['id']}", json={"goal": "A changed goal"}).status_code == 409
+    assert db.claim_job("media", "test-worker", 60)["id"] == job["id"]
     db.interrupt_jobs()
     assert db.job(job["id"])["status"] == "failed"
     assert db.job(job["id"])["error"]["code"] == "INTERRUPTED"
@@ -38,7 +40,7 @@ def test_expired_metadata_is_removed_from_all_saved_source_references(client):
 
 def test_oversize_request_is_rejected_before_multipart_parsing(client):
     p = project(client)
-    r = client.post(f"/api/v1/projects/{p['id']}/assets", content=b"", headers={"Content-Length": str(102 * 1024 * 1024)})
+    r = client.post(f"/api/v1/projects/{p['id']}/uploads/upload_x/file", content=b"", headers={"Content-Length": str(102 * 1024 * 1024)})
     assert r.status_code == 413
     assert r.json()["error"]["code"] == "REQUEST_TOO_LARGE"
 

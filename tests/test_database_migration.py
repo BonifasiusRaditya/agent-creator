@@ -11,16 +11,19 @@ def test_migration_preserves_project_data_and_excludes_sessions(tmp_path, monkey
     folder = tmp_path / 'source'
     folder.mkdir()
     source = Database(folder / 'trendforge.sqlite3', backend='sqlite')
-    p = source.create_project({'niche': 'Synthetic migration test'})
+    user = source.create_user('migration-tester', 'Migration-Tester', 'test-hash', 'ab' * 16)
+    p = source.create_project({'niche': 'Synthetic migration test'}, owner_id=user['id'])
     source.add_doc(p['id'], 'posting_caption', {'text': 'Synthetic test caption'})
-    with source.connect() as c:
-        c.execute('INSERT INTO sessions VALUES (?,?,?)', ('test-only-session-hash', 1, 'test-csrf'))
+    source.create_session('test-only-session-hash', user['id'], 1, 'test-csrf')
     target = Database(tmp_path / 'target.sqlite3', backend='sqlite')
     monkeypatch.setattr(migrate_to_turso, 'DATA', folder)
     monkeypatch.setattr(migrate_to_turso, 'Database', lambda *a, **kw: target)
     monkeypatch.setattr(sys, 'argv', ['migration', '--apply'])
     migrate_to_turso.main()
     assert target.project(p['id'])['niche'] == 'Synthetic migration test'
+    # Ownership survives the move, so the account still sees its projects.
+    assert target.project_owner(p['id']) == user['id']
+    assert target.user_by_username('migration-tester')['id'] == user['id']
     assert target.docs(p['id'], 'posting_caption')[0]['text'] == 'Synthetic test caption'
     assert len(target.events(p['id'])) == 1
     with target.connect() as c:

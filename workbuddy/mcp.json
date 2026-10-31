@@ -2,15 +2,15 @@
   "mcpServers": {
     "trendforge": {
       "type": "stdio",
-      "command": "C:\\Users\\Lenovo\\OneDrive\\Documents\\Kerjaan\\agent_creator\\.venv\\Scripts\\python.exe",
+      "command": "C:\\path\\to\\tencent-hackathon\\.venv\\Scripts\\python.exe",
       "args": [
         "-m",
         "trendforge.mcp_server"
       ],
-      "cwd": "C:\\Users\\Lenovo\\OneDrive\\Documents\\Kerjaan\\agent_creator",
+      "cwd": "C:\\path\\to\\tencent-hackathon",
       "env": {
-        "TRENDFORGE_DATA_DIR": "C:\\Users\\Lenovo\\OneDrive\\Documents\\Kerjaan\\agent_creator\\.data",
-        "TRENDFORGE_URL": "http://127.0.0.1:8765"
+        "TRENDFORGE_URL": "http://127.0.0.1:8765",
+        "TRENDFORGE_TOKEN": "create-a-personal-token-in-Connections"
       }
     }
   }

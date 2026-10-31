@@ -37,6 +37,7 @@ const brand = `<a class="brand" href="/" data-nav><img src="/static/mark.svg" al
 const steps = ['Discover','Brief','Footage','Edit','Subtitles','Export'];
 const stepPaths = ['discover','brief','footage','edit','subtitles','export'];
 const phaseNames = {CONTEXT_READY:'New project',RESEARCH_READY:'Research ready',BRIEF_DRAFT:'Writing',BRIEF_APPROVED:'Brief approved',ASSETS_READY:'Footage ready',PLAN_DRAFT:'Planning',PLAN_APPROVED:'Edit approved',DRAFT_READY:'Draft ready',CAPTIONS_REVIEW:'Review subtitles',READY_TO_EXPORT:'Ready to export',EXPORT_READY:'Exported',USER_CONFIRMED_READY:'Ready to upload'};
+const MAX_REFERENCES=10; // Mirrors the server limit that keeps writing requests within the model's context.
 const S = {csrf:'',projects:[],settings:{},project:null,route:'/',step:0,search:'',busy:false,selected:new Set(),uploading:false,queue:[],mobile:false,polling:false,systemJob:null};
 const stockName = provider => provider === 'pixabay' ? 'Pixabay' : 'Pexels';
 const stockHome = provider => provider === 'pixabay' ? 'https://pixabay.com/' : 'https://www.pexels.com/';
@@ -62,7 +63,7 @@ async function api(path, options={}) {
   if (!response.ok) {
     const error = new Error(data.error?.message||'This action could not be completed.');
     error.code=data.error?.code; error.details=data.error?.details;
-    if (response.status===401 && path!=='/session') {S.csrf='';renderAuth(false);}
+    if (response.status===401 && path!=='/session' && path!=='/auth/register') {S.csrf='';S.user=null;renderAuth('login');}
     throw error;
   }
   return data;
@@ -80,6 +81,7 @@ async function busy(label,fn) {
   try {return await fn();} catch(error) {toast(error.message,true);if(error.code==='STALE_REVISION'&&S.project&&!dirty()) await refreshProject();}
   finally {S.busy=false;delete document.body.dataset.busy;bar.remove();}
 }
+function referenceCount(){return `${S.selected.size}/${MAX_REFERENCES} references selected${S.selected.size>=MAX_REFERENCES?' · limit reached':''}`;}
 function dirty() {return !!document.querySelector('form[data-edit][data-dirty="true"]');}
 function canLeave() {return !dirty()||confirm('Discard your unsaved changes?');}
 async function navigate(path,replace=false) {
@@ -93,9 +95,45 @@ async function refreshData() {
 }
 async function refreshProject(render=true) {
   if (!S.project) return;
+  const before=S.project,kept=render?keepUnsavedForms():[];
   S.project=await api(`/projects/${S.project.id}`);
   S.projects=await api('/projects');
-  if(render) renderShell(projectPage());
+  if(render){renderShell(projectPage());restoreUnsavedForms(kept,before);}
+}
+// A page can hold several editable forms (Brief + posting caption). Saving one
+// re-renders the page, so carry the other forms' unsaved values across it.
+function formBase(id,p){return {'brief-form':p.brief_id,'posting-caption-form':p.posting_caption?.id,'plan-form':p.plan_id,'caption-form':p.subtitle_id}[id]??null;}
+function formFields(form){
+  const seen={};
+  return [...form.elements].filter(el=>el.matches('input,textarea,select')&&!['submit','button','reset','file','hidden'].includes(el.type)).map(el=>{
+    const key=el.name||el.id||[...el.attributes].map(a=>a.name).find(n=>n.startsWith('data-'))||el.tagName;
+    seen[key]=(seen[key]||0)+1;return [`${key}#${seen[key]-1}`,el];
+  });
+}
+function keepUnsavedForms(){
+  return [...document.querySelectorAll('form[data-edit][data-dirty="true"]')].filter(f=>f.id).map(f=>({
+    id:f.id,shots:f.querySelectorAll('[data-shot]').length,
+    values:formFields(f).map(([key,el])=>[key,['checkbox','radio'].includes(el.type)?el.checked:el.value])}));
+}
+function restoreUnsavedForms(kept,before){
+  let lost=false;
+  for(const saved of kept){
+    const f=document.getElementById(saved.id);
+    if(!f||formBase(saved.id,before)!==formBase(saved.id,S.project)){lost=true;continue;}
+    if(saved.shots)setShotCount(saved.shots);
+    const fields=new Map(formFields(f));
+    for(const [key,value] of saved.values){const el=fields.get(key);if(!el)continue;if(typeof value==='boolean')el.checked=value;else el.value=value;}
+    f.querySelectorAll('[data-text]').forEach(el=>{const count=el.parentElement.querySelector('.cue-count');if(count)count.textContent=`${el.value.length} characters`;});
+    f.dataset.dirty='true';
+  }
+  if(kept.length)updateTotals();
+  if(lost)toast('Some unsaved changes could not be kept because that item changed. Review it before saving again.',true);
+}
+function setShotCount(n){
+  const box=document.querySelector('#shots');if(!box)return;
+  const shots=[...box.querySelectorAll('[data-shot]')],target=Math.min(5,Math.max(3,n));
+  while(shots.length>target)shots.pop().remove();
+  while(shots.length<target){const copy=shots[0].cloneNode(true);copy.querySelector('h4').textContent=`Shot ${String(shots.length+1).padStart(2,'0')}`;copy.querySelectorAll('textarea').forEach(el=>el.value='');copy.querySelector('[data-duration]').value=1;box.append(copy);shots.push(copy);}
 }
 function footer(){return '<footer class="page-footer"><span>Made for the way you create.</span><span>Research. Write. Edit. Publish.</span></footer>';}
 function sidebar() {
@@ -105,7 +143,7 @@ function sidebar() {
     <div class="sidebar-label spread">Recent projects<button class="icon-btn" aria-label="Create project" data-action="new-project">${icon('plus',13)}</button></div>
     ${S.projects.slice(0,5).map(p=>`<a class="sidebar-project ${S.project?.id===p.id&&isProject?'selected':''}" href="/projects/${p.id}/discover" data-nav><span class="project-dot"></span><span>${esc(p.niche)}</span></a>`).join('')||'<p class="small muted" style="padding:0 14px;font-size:11px">Your projects will appear here.</p>'}
     <div class="sidebar-bottom"><div class="connection-card"><h4>${S.settings.ai_engine==='workbuddy'?'Create with WorkBuddy':'Your creative tools'}</h4><p>${S.settings.ai_engine==='workbuddy'?'Your agent writes the story. Review and produce it here.':'Manage your writing, research and speech tools.'}</p><a href="/connections" data-nav>View connections${icon('arrow',13)}</a></div>
-    <div class="local-user"><span class="avatar">${icon('user',15)}</span><div><p>Your workspace</p><small>On this device</small></div><button class="icon-btn" data-action="sign-out" aria-label="Sign out" style="margin-left:auto">${icon('logout',15)}</button></div></div></aside>`;
+    <div class="local-user"><span class="avatar">${icon('user',15)}</span><div><p>${esc(S.user?.display_name||'Your workspace')}</p><small>${S.user?.is_admin?'Workspace admin':'Signed in'}</small></div><button class="icon-btn" data-action="sign-out" aria-label="Sign out" style="margin-left:auto">${icon('logout',15)}</button></div></div></aside>`;
 }
 function renderShell(content) {
   const title=S.route==='/connections'?'Connections':S.route==='/exports'?'Exports':S.route==='/projects'?'All projects':S.route.startsWith('/projects/')?S.project?.niche||'Project':'Overview';
@@ -128,19 +166,30 @@ function homePage(all=false) {
   <div class="section-head"><div><h2>${all?'All projects':'Recent projects'}</h2><p>${S.projects.length?'Pick up where you left off.':'A little inspiration. A few clips. Your next creation.'}</p></div>${!all?'<a class="inline-link" href="/projects" data-nav>View all projects'+icon('arrow',14)+'</a>':''}</div><div id="project-list">${projectsList(all)}</div>
   ${!all?`<div class="guide-grid"><div class="guide"><span class="guide-number">01</span><div><h4>Find your angle</h4><p>Explore YouTube references and develop an idea that fits your audience.</p></div></div><div class="guide"><span class="guide-number">02</span><div><h4>Build your story</h4><p>Draft a script and posting caption, then edit in your favorite app.</p></div></div><div class="guide"><span class="guide-number">03</span><div><h4>Give it the finishing touch</h4><p>Upload your finished edit for subtitles, or try our optional editor.</p></div></div></div>`:''}${footer()}`;
 }
-function renderAuth(setup) {
-  document.title=setup?'Create your workspace — TrendForge':'Welcome back — TrendForge';
-  app.innerHTML=`<main class="auth-layout" id="main"><section class="auth-left">${brand}<form class="auth-form" id="auth-form" data-setup="${setup}"><span class="eyebrow">${setup?'A space for your next idea':'Your stories are waiting'}</span><h1>${setup?'Make room for<br>your next story.':'Welcome back.'}</h1><p>${setup?'Set a password to keep your workspace, connections, and creative work private on this device.':'Sign in to pick up where you left off.'}</p><div class="field"><label for="password">${setup?'Create a password':'Password'}</label><input id="password" name="password" type="password" autocomplete="${setup?'new-password':'current-password'}" minlength="8" maxlength="200" required placeholder="${setup?'At least 8 characters':'Enter your password'}"></div>${setup?'<div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required placeholder="Enter your password again"></div>':''}<div id="auth-error" class="form-error" role="alert"></div><button type="submit" class="btn btn-primary btn-large">${setup?'Create workspace':'Sign in'}${icon('arrow',16)}</button><div class="auth-note">Video editing runs on your device.<br>Create with WorkBuddy, then review and produce your video here.</div></form><small class="auth-note">TrendForge · A little less work. A lot more creating.</small></section><section class="auth-art" aria-hidden="true"><div class="art-grid"></div><div class="art-ring"></div><div class="art-phone"><div class="art-land"></div><div class="art-land second"></div><div class="art-caption"><i></i><i></i></div></div><h2>From a spark.<br>To a story.</h2><p>Your ideas deserve more time in the world, and less time on a to-do list.</p></section></main>`;
+function renderAuth(mode='login') {
+  const register=mode==='register'&&S.registrationOpen;
+  document.title=register?'Create your account — TrendForge':'Welcome back — TrendForge';
+  app.innerHTML=`<main class="auth-layout" id="main"><section class="auth-left">${brand}<form class="auth-form" id="auth-form" data-mode="${register?'register':'login'}"><span class="eyebrow">${register?'A space for your next idea':'Your stories are waiting'}</span><h1>${register?'Make room for<br>your next story.':'Welcome back.'}</h1><p>${register?'Create your own account with the invite code from your workspace owner. Your projects stay private to you.':'Sign in with your username to pick up where you left off.'}</p><div class="field"><label for="username">Username</label><input id="username" name="username" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9][A-Za-z0-9._\-]{2,31}" required placeholder="${register?'Letters, numbers, dots, dashes':'Your username'}"></div><div class="field"><label for="password">${register?'Create a password':'Password'}</label><input id="password" name="password" type="password" autocomplete="${register?'new-password':'current-password'}" minlength="8" maxlength="200" required placeholder="${register?'At least 8 characters':'Enter your password'}"></div>${register?'<div class="field"><label for="confirm-password">Confirm password</label><input id="confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required placeholder="Enter your password again"></div><div class="field"><label for="invite-code">Invite code</label><input id="invite-code" name="invite_code" autocomplete="off" required placeholder="From your workspace owner"></div>':''}<div id="auth-error" class="form-error" role="alert"></div><button type="submit" class="btn btn-primary btn-large">${register?'Create account':'Sign in'}${icon('arrow',16)}</button>${S.registrationOpen?`<p class="auth-note"><button type="button" class="inline-link" data-auth-mode="${register?'login':'register'}">${register?'Already have an account? Sign in':'New here? Create an account'}</button></p>`:''}<div class="auth-note">Create with WorkBuddy, then review and produce your video here.</div></form><small class="auth-note">TrendForge · A little less work. A lot more creating.</small></section><section class="auth-art" aria-hidden="true"><div class="art-grid"></div><div class="art-ring"></div><div class="art-phone"><div class="art-land"></div><div class="art-land second"></div><div class="art-caption"><i></i><i></i></div></div><h2>From a spark.<br>To a story.</h2><p>Your ideas deserve more time in the world, and less time on a to-do list.</p></section></main>`;
+  document.querySelector('[data-auth-mode]')?.addEventListener('click',event=>renderAuth(event.currentTarget.dataset.authMode));
+  document.querySelector('#username').focus();
+}
+function tokensPanel(){
+  const list=S.tokens||[];
+  return `<div class="panel connection-panel"><div class="connection-title"><div class="service-icon">${icon('link',21)}</div><div><h3>Connector tokens</h3><p>WorkBuddy access to your projects</p></div>${badge(list.length?`${list.length} active`:'None yet',!!list.length)}</div>${list.length?`<ul class="token-list">${list.map(x=>`<li><div><strong>${esc(x.label)}</strong><br><span class="muted">Created ${fmtDate(x.created_at)}${x.last_used_at?` · last used ${fmtDate(x.last_used_at)} ${fmtTime(x.last_used_at)}`:' · not used yet'}</span></div>${button('revoke-token','Revoke','quiet',`data-id="${esc(x.id)}"`)}</li>`).join('')}</ul>`:'<p class="small">Create a connector configuration above to connect WorkBuddy.</p>'}<p class="hint">Revoke a token you no longer use, or one that may have been shared by mistake. WorkBuddy then needs a new configuration.</p></div>`;
+}
+function accountPanel(){
+  return `<form class="panel connection-panel" id="password-form" data-edit><div class="connection-title"><div class="service-icon">${icon('user',21)}</div><div><h3>Your account</h3><p>Signed in as ${esc(S.user?.username||'')}</p></div>${badge(S.user?.is_admin?'Workspace admin':'Creator',true)}</div><div class="field"><label for="current-password">Current password</label><input id="current-password" name="current_password" type="password" autocomplete="current-password" required maxlength="200"></div><div class="field"><label for="new-password">New password</label><input id="new-password" name="new_password" type="password" autocomplete="new-password" minlength="8" maxlength="200" required placeholder="At least 8 characters"></div><div class="field"><label for="confirm-new-password">Confirm new password</label><input id="confirm-new-password" name="confirm_password" type="password" autocomplete="new-password" minlength="8" required></div><div class="spread"><span class="hint">Your other devices will be signed out.</span><button type="submit" class="btn btn-primary">Change password</button></div></form>`;
 }
 function connectionPage() {
   const s=S.settings,workbuddy=s.ai_engine==='workbuddy';
   return `<div class="spread page-actions"><div><h1 class="page-title">Your creative tools.</h1><p class="muted" style="margin:0">WorkBuddy handles the thinking. Your workspace brings it to life.</p></div>${badge('Managed for you',true)}</div>
-  <div class="connection-grid"><div class="panel connection-panel agent-connection"><div class="connection-title"><div class="service-icon">${icon('spark',23)}</div><div><h3>Tencent WorkBuddy</h3><p>Ideas, research, briefs and scripts</p></div>${badge(workbuddy?'Primary AI engine':'Available connector',workbuddy)}</div><p class="small">Create with WorkBuddy using the TrendForge connector. It reads your project, researches references, and saves original ideas and scripts back here for your review.</p><ol class="setup-steps"><li>Add the TrendForge connector to WorkBuddy once.</li><li>Request ideas from a project and copy the task into WorkBuddy.</li><li>Return here to review the result, add footage, and make your video.</li></ol><div class="row wrap">${button('show-connector',`${icon('copy',14)}Copy connector configuration`,'secondary')}<a class="btn" href="/api/v1/settings/connector-package" download>Download connector</a><a class="inline-link" href="/api/v1/settings/agent-skill" download>Download agent skill${icon('download',13)}</a></div><div id="connector-code"></div><p class="hint" style="margin-top:18px">${s.workbuddy_last_seen?'Connector last contacted this workspace at '+esc(fmtTime(s.workbuddy_last_seen))+'.':'Waiting for the first connection from WorkBuddy. A configured engine does not mean the connector has been installed.'}</p></div>
+  <div class="connection-grid"><div class="panel connection-panel agent-connection"><div class="connection-title"><div class="service-icon">${icon('spark',23)}</div><div><h3>Tencent WorkBuddy</h3><p>Ideas, research, briefs and scripts</p></div>${badge(workbuddy?'Primary AI engine':'Available connector',workbuddy)}</div><p class="small">Create with WorkBuddy using the TrendForge connector. It reads your project, researches references, and saves original ideas and scripts back here for your review.</p><ol class="setup-steps"><li>Add the TrendForge connector to WorkBuddy once.</li><li>Request ideas from a project and copy the task into WorkBuddy.</li><li>Return here to review the result, add footage, and make your video.</li></ol><div class="row wrap">${button('show-connector',`${icon('copy',14)}Create connector configuration`,'secondary')}${button('download-connector','Download connector')}<a class="inline-link" href="/api/v1/settings/agent-skill" download>Download agent skill${icon('download',13)}</a></div><p class="hint">Each configuration contains a new personal connector token that acts only on your projects. Keep it private, like a password.</p><div id="connector-code"></div><p class="hint" style="margin-top:18px">${s.workbuddy_last_seen?'Connector last contacted this workspace at '+esc(fmtTime(s.workbuddy_last_seen))+'.':'Waiting for the first connection from WorkBuddy. A configured engine does not mean the connector has been installed.'}</p></div>
   <div class="panel connection-panel"><div class="connection-title"><div class="service-icon">${icon('youtube',23)}</div><div><h3>YouTube research</h3><p>Recent references in your niche</p></div>${badge(s.youtube_configured?'Configured':'Setup needed',s.youtube_configured)}</div><p class="small">Public video metadata and source links for creative context. Service access is managed by the workspace owner; you do not need to enter an API key.</p>${button('test-youtube','Test connection','secondary',s.youtube_configured?'':'disabled')}</div>
   <div class="panel connection-panel"><div class="connection-title"><div class="service-icon">${icon('film',21)}</div><div><h3>${stockName(s.stock_provider)} footage</h3><p>Optional stock clips</p></div>${badge(s.stock_configured?'Configured':'Not enabled',s.stock_configured)}</div><p class="small">Find stock footage alongside your own clips. Service access is managed by the workspace owner. Source links and creator credits stay attached.</p>${button('test-stock','Test connection','secondary',s.stock_configured?'':'disabled')}</div>
   ${!workbuddy?`<div class="panel connection-panel"><div class="connection-title"><div class="service-icon">${icon('spark',21)}</div><div><h3>Alternative writing provider</h3><p>Enabled by the workspace owner</p></div>${badge(s.ai_connected?'Configured':'Setup needed',s.ai_connected)}</div><p class="small">The workspace is currently using an OpenAI-compatible provider for website writing requests.</p>${button('test-ai','Test connection','secondary',s.ai_connected?'':'disabled')}</div>`:''}
-  <form class="panel connection-panel" id="speech-settings" data-edit><div class="connection-title"><div class="service-icon">${icon('subtitles',22)}</div><div><h3>Speech & subtitles</h3><p>Indonesian transcription on your device</p></div>${badge(s.speech_models_ready?.includes(s.speech_model)?'Downloaded':'Setup needed',s.speech_models_ready?.includes(s.speech_model))}</div><div class="field"><label for="speech-model">Multilingual speech model</label><select id="speech-model" name="speech_model" ${s.configuration_sources?.speech_model==='environment'?'disabled':''}>${['tiny','base','small'].map((m,i)=>`<option value="${m}" ${s.speech_model===m?'selected':''}>${['Tiny — fastest, lower accuracy','Base — balanced','Small — more accurate, slower'][i]}</option>`).join('')}</select><span class="hint">Download once. No speech API key is needed.</span></div><div class="spread">${button('download-model',`${icon('download',14)}Download model`,'secondary',s.active_job?'disabled':'')}${s.configuration_sources?.speech_model==='environment'?'':`<button type="submit" class="btn btn-primary">Save model</button>`}</div><div id="model-job-status">${s.active_job?.type==='model_download'?jobBanner(s.active_job,true):''}</div></form>
-  <div class="panel connection-panel" style="grid-column:1/-1"><div class="connection-title" style="margin-bottom:14px"><div class="service-icon">${icon('shield',21)}</div><div><h3>Your files, your workspace</h3><p>Local video and speech processing</p></div>${badge(s.ffmpeg_available?'Video engine installed':'Video engine unavailable',s.ffmpeg_available)}</div><p class="storage-note">WorkBuddy receives project context and reference metadata through the connector. Video editing and speech processing run locally. Files follow your device’s folder-sync settings.</p><p class="storage-note" style="margin-bottom:0"><strong>Project database</strong><br>${s.database_backend==='turso'?'Turso Cloud':'SQLite on this device'}<br><br><strong>Storage folder</strong><br>${esc(s.storage_path)}<br><span class="muted">Delete a project to remove its workspace files. Separately downloaded copies stay with you.</span></p></div></div>${footer()}`;
+  <form class="panel connection-panel" id="speech-settings" data-edit><div class="connection-title"><div class="service-icon">${icon('subtitles',22)}</div><div><h3>Speech & subtitles</h3><p>Indonesian transcription on your device</p></div>${badge(s.speech_models_ready?.includes(s.speech_model)?'Downloaded':'Setup needed',s.speech_models_ready?.includes(s.speech_model))}</div><div class="field"><label for="speech-model">Multilingual speech model</label><select id="speech-model" name="speech_model" ${s.configuration_sources?.speech_model==='environment'||!s.is_admin?'disabled':''}>${['tiny','base','small'].map((m,i)=>`<option value="${m}" ${s.speech_model===m?'selected':''}>${['Tiny — fastest, lower accuracy','Base — balanced','Small — more accurate, slower'][i]}</option>`).join('')}</select><span class="hint">${s.is_admin?'Download once. No speech API key is needed.':'Shared by the whole workspace. A workspace admin downloads and changes the model.'}</span></div>${s.is_admin?`<div class="spread">${button('download-model',`${icon('download',14)}Download model`,'secondary',s.worker_busy?'disabled':'')}${s.configuration_sources?.speech_model==='environment'?'':`<button type="submit" class="btn btn-primary">Save model</button>`}</div>`:''}<div id="model-job-status">${s.active_job?.type==='model_download'?jobBanner(s.active_job,true):''}</div></form>
+  ${tokensPanel()}${accountPanel()}
+  <div class="panel connection-panel" style="grid-column:1/-1"><div class="connection-title" style="margin-bottom:14px"><div class="service-icon">${icon('shield',21)}</div><div><h3>Your files, your workspace</h3><p>Local video and speech processing</p></div>${badge(s.ffmpeg_available?'Video engine installed':'Video engine unavailable',s.ffmpeg_available)}</div><p class="storage-note">WorkBuddy receives project context and reference metadata through the connector. Video editing and speech processing run locally. Files follow your device’s folder-sync settings.</p><p class="storage-note" style="margin-bottom:0"><strong>Project database</strong><br>${s.database_backend==='turso'?'Turso Cloud':'SQLite on this device'}<br><br><strong>Video storage</strong><br>${s.storage_backend==='cos'?'Tencent Cloud Object Storage (COS)':'This device'}<br><br><strong>Video worker</strong><br>${s.worker_online?(s.worker_mode==='embedded'?'Running inside this service':'Online'):'<span style="color:var(--red)">Offline — uploads and videos wait in the queue until it is back</span>'}${s.storage_path?`<br><br><strong>Storage folder</strong><br>${esc(s.storage_path)}`:''}<br><span class="muted">Delete a project to remove its workspace files. Separately downloaded copies stay with you.</span></p></div></div>${footer()}`;
 }
 
 function openAgentDialog(request) {
@@ -180,8 +229,8 @@ function discoverPage() {
   ${!S.settings.youtube_configured?`<div class="callout">${icon('link',19)}<div style="flex:1"><strong>YouTube research is awaiting setup.</strong><p>The workspace owner manages this service. You can continue with your own topic.</p></div><a href="/connections" data-nav class="btn btn-small">View status</a></div>`:''}
   <div class="panel research-panel"><form id="research-form" class="research-header"><div class="research-controls"><input id="research-query" name="query" aria-label="Research topic" value="${esc(run?.query||p.niche)}" minlength="2" maxlength="150" placeholder="Search your niche"><select name="period_days" aria-label="Research period">${[1,7,30].map(n=>`<option value="${n}" ${(run?.period_days||7)===n?'selected':''}>Last ${n} ${n===1?'day':'days'}</option>`).join('')}</select><select name="source_mode" aria-label="Reference source"><option value="search">Niche search</option><option value="chart" ${run?.source_mode==='chart'?'selected':''}>Popular chart</option></select><button class="btn btn-primary" type="submit" ${p.active_job?'disabled':''}>${icon('search',15)}Find references</button></div></form>
   ${run?.warnings?.length?`<div style="padding:20px 24px 0"><div class="callout warning" style="margin:0">${icon('alert',16)}<p>${run.warnings.map(esc).join(' ')}</p></div></div>`:''}
-  ${items.length?`<div class="research-results">${items.map(item=>`<article class="source-card ${S.selected.has(item.video_id)?'selected':''}" data-source-card="${esc(item.video_id)}"><div class="source-image">${item.thumbnail_url?`<img src="${esc(item.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:''}<input type="checkbox" data-source="${esc(item.video_id)}" aria-label="Select ${esc(item.title)}" ${S.selected.has(item.video_id)?'checked':''}></div><div class="source-info"><h4>${esc(item.title)}</h4><p>${esc(item.channel_title)}</p><div class="source-meta"><span>${number(item.view_count)}${item.view_count==null?'':' views'}</span><span>${fmtDate(item.published_at)}</span></div><a href="${esc(item.watch_url)}" target="_blank" rel="noopener noreferrer">Watch on YouTube${icon('external',10)}</a></div></article>`).join('')}</div>`:`<div class="research-empty">${icon('search',35)}<p>${run?'No references found for this topic. Try another search, or start with your own idea.':'Search for recent references in your niche. Select references from any of your searches as creative context.'}</p>${button('manual-research','Continue with my own topic','quiet')}</div>`}
-  <div class="research-foot"><span>${run?`${run.data_mode==='manual'?'Your own topic':run.data_mode==='cache'?'Saved research':'YouTube references'} · ${fmtDate(run.fetched_at)} at ${fmtTime(run.fetched_at)}`:'References are creative context, not a prediction of what will go viral.'}</span><span id="selected-count">${S.selected.size} references selected</span></div></div>
+  ${items.length?`<div class="research-results">${items.map(item=>`<article class="source-card ${S.selected.has(item.video_id)?'selected':''}" data-source-card="${esc(item.video_id)}"><div class="source-image">${item.thumbnail_url?`<img src="${esc(item.thumbnail_url)}" alt="" loading="lazy" referrerpolicy="no-referrer">`:''}<input type="checkbox" data-source="${esc(item.video_id)}" aria-label="Select ${esc(item.title)}" ${S.selected.has(item.video_id)?'checked':S.selected.size>=MAX_REFERENCES?'disabled':''}></div><div class="source-info"><h4>${esc(item.title)}</h4><p>${esc(item.channel_title)}</p><div class="source-meta"><span>${number(item.view_count)}${item.view_count==null?'':' views'}</span><span>${fmtDate(item.published_at)}</span></div><a href="${esc(item.watch_url)}" target="_blank" rel="noopener noreferrer">Watch on YouTube${icon('external',10)}</a></div></article>`).join('')}</div>`:`<div class="research-empty">${icon('search',35)}<p>${run?'No references found for this topic. Try another search, or start with your own idea.':'Search for recent references in your niche. Select references from any of your searches as creative context.'}</p>${button('manual-research','Continue with my own topic','quiet')}</div>`}
+  <div class="research-foot"><span>${run?`${run.data_mode==='manual'?'Your own topic':run.data_mode==='cache'?'Saved research':'YouTube references'} · ${fmtDate(run.fetched_at)} at ${fmtTime(run.fetched_at)}`:'References are creative context, not a prediction of what will go viral.'}</span><span id="selected-count">${referenceCount()}</span></div></div>
   <div class="action-bar"><p>${S.settings.ai_engine==='workbuddy'?'Ask WorkBuddy for three original ideas using your topic and selected references.':S.settings.ai_connected?'Turn your topic and selected references into three original ideas.':'Writing service is awaiting setup. You can write your own brief.'}</p><div class="row">${button('goto-step','Write my own brief','secondary','data-step="1"')}${button('generate-ideas',`${icon('spark',15)}${S.settings.ai_engine==='workbuddy'?'Create with WorkBuddy':'Generate ideas'}`,'primary',S.settings.ai_engine!=='workbuddy'&&!S.settings.ai_connected||p.active_job?'disabled':'')}</div></div>
   ${p.ideas?.length?`<div class="section-head" style="margin-top:30px"><div><h2>Three ways to tell your story.</h2><p>${S.settings.ai_engine==='workbuddy'?'Ideas from WorkBuddy.':'AI suggestions.'} Choose the one you want to develop.</p></div></div><div class="ideas">${p.ideas.map((idea,i)=>`<article class="idea-card"><span class="idea-number">0${i+1}</span><h3>${esc(idea.title)}</h3><p>${esc(idea.angle)}</p><div class="idea-hook">“${esc(idea.hook)}”</div>${button('choose-idea',`Develop this idea${icon('arrow',13)}`,'secondary',`data-id="${esc(idea.id)}" ${p.active_job?'disabled':''}`)}</article>`).join('')}</div>`:''}`;
 }
@@ -202,7 +251,8 @@ function footagePage() {
   <div class="action-bar"><p>${p.assets.length>=3?`${duration(p.assets.reduce((sum,a)=>sum+a.duration_seconds,0))} of footage · ${p.target_duration_seconds}s target`:'Clip assembly is optional. Bring your own finished edit for subtitles.'}</p><div class="row">${button('open-stock','Find stock footage','secondary',p.active_job?'disabled':'')}${button('goto-step',`Continue to Edit${icon('arrow',14)}`,'secondary','data-step="3"')}</div></div>`;
 }
 function uploadQueue() {
-  return S.queue.map((file,i)=>`<div class="upload-progress"><div class="spread"><span class="small">${esc(file.name)}</span><span class="small muted">${file.error?`<span style="color:var(--red)">${esc(file.error)}</span>`:file.done?'Uploaded':file.progress===100?'Checking video…':`${file.progress}%`}</span>${!file.done&&!file.error?button('cancel-upload','Cancel','quiet'):''}</div>${!file.error&&!file.done?`<div class="progress-track"><div class="progress-fill" style="width:${file.progress}%"></div></div>`:''}</div>`).join('');
+  const queue=S.queue.length?S.queue:(S.project?.uploads||[]).filter(u=>u.status==='validating').map(u=>({name:u.original_name,progress:100,checking:true}));
+  return queue.map((file,i)=>`<div class="upload-progress"><div class="spread"><span class="small">${esc(file.name)}</span><span class="small muted">${file.error?`<span style="color:var(--red)">${esc(file.error)}</span>`:file.done?'Added':file.checking||file.progress===100?'Checking video…':`${file.progress}%`}</span>${!file.done&&!file.error?button('cancel-upload','Cancel','quiet'):''}</div>${!file.error&&!file.done?`<div class="progress-track"><div class="progress-fill" style="width:${file.progress}%"></div></div>`:''}</div>`).join('');
 }
 
 function postingCaptionPanel() {
@@ -275,7 +325,7 @@ function bindMedia() {
 
 async function route() {
   S.route=location.pathname;
-  if(S.route==='/connections'){S.settings=await api('/settings');renderShell(connectionPage());document.title='Connections — TrendForge';return;}
+  if(S.route==='/connections'){[S.settings,S.tokens]=await Promise.all([api('/settings'),api('/tokens')]);renderShell(connectionPage());document.title='Connections — TrendForge';return;}
   const match=S.route.match(/^\/projects\/([^/]+)(?:\/([^/]+))?$/);
   if(match){
     if(S.project?.id!==match[1]){S.selected.clear();S.queue=[];S.rights=false;}
@@ -301,12 +351,12 @@ function readBrief() {
 async function saveBrief() {
   const form=document.querySelector('#brief-form');if(!form.reportValidity())return false;
   await api(`/projects/${S.project.id}/briefs`,{method:'POST',body:readBrief()});
-  await refreshProject();return true;
+  form.removeAttribute('data-dirty');await refreshProject();return true;
 }
 function readPlan(){return {brief_revision_id:S.project.brief_id,target_duration_seconds:S.project.target_duration_seconds,
   segments:[...document.querySelectorAll('[data-plan-asset]')].map((el,i)=>({asset_id:el.dataset.planAsset,order:i+1,in_seconds:Number(el.querySelector('[data-in]').value),out_seconds:Number(el.querySelector('[data-out]').value)})),
   framing:'fit_pad',preset:'simple_fade',audio_mode:'original',expected_project_revision:S.project.revision};}
-async function savePlan(){if(!document.querySelector('#plan-form').reportValidity())return false;await api(`/projects/${S.project.id}/plans`,{method:'POST',body:readPlan()});await refreshProject();return true;}
+async function savePlan(){const form=document.querySelector('#plan-form');if(!form.reportValidity())return false;await api(`/projects/${S.project.id}/plans`,{method:'POST',body:readPlan()});form.removeAttribute('data-dirty');await refreshProject();return true;}
 function readCues(){return [...document.querySelectorAll('[data-cue]')].map(el=>({id:el.dataset.cue,start_seconds:Number(el.querySelector('[data-start]').value),end_seconds:Number(el.querySelector('[data-end]').value),text:el.querySelector('[data-text]').value}));}
 function splitCues(cues) {
   const out=[];
@@ -318,7 +368,7 @@ async function saveSubtitles() {
   const cues=splitCues(readCues());
   const noSpeech=document.querySelector('#no-speech-confirm').checked;
   await api(`/projects/${S.project.id}/subtitles`,{method:'POST',body:{draft_id:S.project.draft_id,cues,speech_status:noSpeech?'no_speech':'speech',expected_project_revision:S.project.revision}});
-  await refreshProject();return true;
+  form.removeAttribute('data-dirty');await refreshProject();return true;
 }
 async function startJob(type,body={}) {
   await api(`/projects/${S.project.id}/${type}`,{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body});
@@ -332,16 +382,38 @@ async function uploadFiles(files) {
   if(S.project.assets.length+files.length>5)return toast('Use at most five clips in one project.',true);
   S.uploading=true;S.uploadCancelled=false;const pid=S.project.id;S.queue=[];
   for(const file of files){if(S.uploadCancelled)break;const entry={name:file.name,progress:0,done:false};S.queue.push(entry);updateQueue();
-    try {if(file.size>100*1024*1024)throw new Error('Larger than 100 MiB.');await new Promise((resolve,reject)=>{
-      const xhr=new XMLHttpRequest();S.uploadXHR=xhr;xhr.open('POST',`/api/v1/projects/${pid}/assets`);xhr.setRequestHeader('X-CSRF-Token',S.csrf);
-      xhr.upload.onprogress=event=>{if(event.lengthComputable){entry.progress=Math.round(event.loaded/event.total*100);updateQueue();}};
-      xhr.onload=()=>{let data;try{data=JSON.parse(xhr.responseText);}catch{return reject(new Error('Upload failed. Try this file again.'));}if(xhr.status>=400)reject(new Error(data.error?.message||'Upload failed.'));else resolve(data);};
-      xhr.onerror=()=>reject(new Error('Connection interrupted. Try this file again.'));xhr.onabort=()=>reject(new Error('Upload cancelled.'));
-      const form=new FormData();form.append('file',file);form.append('rights_confirmed','true');xhr.send(form);
-    });entry.done=true;await refreshProject(S.route.startsWith(`/projects/${pid}`)&&S.step===2);}
-    catch(error){entry.error=error.message;updateQueue();}
+    try {if(file.size>100*1024*1024)throw new Error('Larger than 100 MiB.');await sendUpload(pid,file,'clip',entry);entry.done=true;entry.checking=false;await refreshProject(S.route.startsWith(`/projects/${pid}`)&&S.step===2);}
+    catch(error){entry.error=error.message;entry.checking=false;if(S.uploadCancelled&&entry.uploadId)api(`/projects/${pid}/uploads/${entry.uploadId}`,{method:'DELETE'}).catch(()=>{});updateQueue();}
   }
   S.uploading=false;S.uploadXHR=null;if(S.project?.id===pid&&S.step===2)await refreshProject();
+}
+// Videos go straight to storage (object storage, or this server when stored locally);
+// the video worker then checks the file before it is added to the project.
+async function sendUpload(pid,file,purpose,entry){
+  const {upload,target}=await api(`/projects/${pid}/uploads`,{method:'POST',body:{filename:file.name,size:file.size,purpose,rights_confirmed:true}});
+  if(entry)entry.uploadId=upload.id;
+  await new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();S.uploadXHR=xhr;xhr.open('POST',target.url);
+    if(target.url.startsWith('/'))xhr.setRequestHeader('X-CSRF-Token',S.csrf);
+    xhr.upload.onprogress=event=>{if(entry&&event.lengthComputable){entry.progress=Math.round(event.loaded/event.total*100);updateQueue();}};
+    xhr.onload=()=>{if(xhr.status>=200&&xhr.status<300)return resolve();let message='Upload failed. Try this file again.';try{message=JSON.parse(xhr.responseText).error?.message||message;}catch{}reject(new Error(message));};
+    xhr.onerror=()=>reject(new Error('Connection interrupted. Try this file again.'));xhr.onabort=()=>reject(new Error('Upload cancelled.'));
+    const form=new FormData();for(const [key,value] of Object.entries(target.fields||{}))form.append(key,value);form.append('file',file);xhr.send(form);
+  });
+  S.uploadXHR=null;if(entry){entry.progress=100;entry.checking=true;updateQueue();}
+  await api(`/projects/${pid}/uploads/${upload.id}/complete`,{method:'POST'});
+  return waitUpload(pid,upload.id);
+}
+async function waitUpload(pid,uid){
+  const deadline=Date.now()+15*60*1000;
+  while(Date.now()<deadline){
+    const upload=await api(`/projects/${pid}/uploads/${uid}`);
+    if(upload.status==='valid')return upload;
+    if(['rejected','cancelled','expired'].includes(upload.status))throw new Error(upload.error?.message||'This video was not accepted.');
+    if(S.uploadCancelled)throw new Error('Upload cancelled.');
+    await new Promise(resolve=>setTimeout(resolve,1200));
+  }
+  throw new Error('Checking this video is taking longer than usual. It will appear on Footage when it is ready.');
 }
 function updateQueue(){const target=document.querySelector('#upload-queue');if(target)target.innerHTML=uploadQueue();}
 
@@ -363,8 +435,7 @@ document.addEventListener('click',async event=>{
   if(action==='clear-secret'){const input=document.querySelector(`[name="${el.dataset.name}"]`);input.value='';input.dataset.remove='true';input.placeholder='Key will be removed when you save.';input.closest('form').dataset.dirty='true';return;}
   if(action==='cancel-upload'){S.uploadCancelled=true;S.uploadXHR?.abort();return;}
   if(action==='add-shot'||action==='remove-shot'){
-    const shots=[...document.querySelectorAll('[data-shot]')];if(action==='remove-shot'&&shots.length>3)shots.at(-1).remove();
-    if(action==='add-shot'&&shots.length<5){const copy=shots[0].cloneNode(true);copy.querySelector('h4').textContent=`Shot ${String(shots.length+1).padStart(2,'0')}`;copy.querySelectorAll('textarea').forEach(el=>el.value='');copy.querySelector('[data-duration]').value=1;document.querySelector('#shots').append(copy);}
+    const count=document.querySelectorAll('[data-shot]').length;setShotCount(action==='add-shot'?count+1:count-1);
     document.querySelector('#brief-form').dataset.dirty='true';updateTotals();return;
   }
   if(action==='clip-up'||action==='clip-down'){const row=el.closest('[data-plan-asset]'),parent=row.parentElement;if(action==='clip-up'&&row.previousElementSibling)parent.insertBefore(row,row.previousElementSibling);if(action==='clip-down'&&row.nextElementSibling)parent.insertBefore(row.nextElementSibling,row);[...parent.children].forEach((r,i)=>r.firstElementChild.textContent=String(i+1).padStart(2,'0'));document.querySelector('#plan-form').dataset.dirty='true';return;}
@@ -379,12 +450,12 @@ document.addEventListener('click',async event=>{
   if(action==='open-stock'){await openStock();return;}
   await busy('Working on your story',async()=>{
     const pid=S.project?.id;
-    if(action==='sign-out'){if(!canLeave())return;await api('/session',{method:'DELETE'});S.csrf='';renderAuth(false);}
+    if(action==='sign-out'){if(!canLeave())return;await api('/session',{method:'DELETE'});S.csrf='';S.user=null;renderAuth('login');}
     else if(action==='delete-project'){if(!confirm('Delete this project and all its clips, drafts, subtitles, and exports? Your separately downloaded copies will stay with you.'))return;await api(`/projects/${pid}`,{method:'DELETE',body:{confirmation:true,expected_project_revision:S.project.revision}});S.project=null;await refreshData();await navigate('/projects');toast('Project and workspace files deleted.');}
     else if(action==='manual-research'){await api(`/projects/${pid}/research`,{method:'POST',body:{query:S.project.niche,period_days:7,source_mode:'manual',language:S.project.language,region:'ID'}});await refreshProject(false);await navigate(`/projects/${pid}/brief`);}
     else if(action==='generate-ideas'){const result=await api(`/projects/${pid}/ai/ideas`,{method:'POST',body:{source_video_ids:[...S.selected],expected_project_revision:S.project.revision}});await refreshProject();if(result.engine==='workbuddy'){openAgentDialog(result);return;}toast('Three ideas are ready for you to explore.');document.querySelector('.ideas')?.scrollIntoView({behavior:'smooth',block:'center'});}
     else if(action==='choose-idea'){const result=await api(`/projects/${pid}/ai/brief`,{method:'POST',body:{idea_id:el.dataset.id,expected_project_revision:S.project.revision}});await refreshProject(false);if(result.engine==='workbuddy'){await refreshProject();openAgentDialog(result);return;}await navigate(`/projects/${pid}/brief`);toast('Your brief and script are ready to review.');}
-    else if(action==='approve-brief'){if(!S.project.brief||dirty()){if(!await saveBrief())return;}await api(`/projects/${pid}/briefs/${S.project.brief_id}/approve`,{method:'POST',body:{confirmation:true,expected_project_revision:S.project.revision}});await refreshProject();toast('Brief approved. Time to add your footage.');}
+    else if(action==='approve-brief'){if(!S.project.brief||document.querySelector('#brief-form')?.dataset.dirty==='true'){if(!await saveBrief())return;}await api(`/projects/${pid}/briefs/${S.project.brief_id}/approve`,{method:'POST',body:{confirmation:true,expected_project_revision:S.project.revision}});await refreshProject();toast('Brief approved. Time to add your footage.');}
     else if(action==='remove-asset'){if(!confirm('Remove this clip? Any edit that uses it will need to be rebuilt.'))return;await api(`/projects/${pid}/assets/${el.dataset.id}`,{method:'DELETE',body:{confirmation:true,expected_project_revision:S.project.revision}});await refreshProject();}
     else if(action==='copy-script'){await navigator.clipboard.writeText(S.project.brief?.script||'');toast('Script copied.');}
     else if(action==='copy-posting-caption'){await navigator.clipboard.writeText(document.querySelector('#posting-caption').value);toast('Caption copied.');}
@@ -402,18 +473,21 @@ document.addEventListener('click',async event=>{
     else if(action==='show-agent-task'){openAgentDialog(await api(`/projects/${pid}/agent-requests/${S.project.agent_request.id}`));}
     else if(action==='copy-agent-task'){try{await navigator.clipboard.writeText(S.agentRequest.prompt);toast('Task copied. Paste it into WorkBuddy.');}catch{document.querySelector('#agent-prompt')?.select();toast('Select and copy the task above.');}}
     else if(action==='cancel-agent-task'){await api(`/projects/${pid}/agent-requests/${el.dataset.id}/cancel`,{method:'POST'});await refreshProject();}
-    else if(action==='show-connector'){const config=await api('/settings/connector');const text=JSON.stringify(config,null,2);document.querySelector('#connector-code').innerHTML=`<pre tabindex="0">${esc(text)}</pre><p class="hint">No API credentials are included in this configuration.</p>`;try{await navigator.clipboard.writeText(text);toast('Connector configuration copied.');}catch{toast('Your connector configuration is shown below.');}}
+    else if(action==='show-connector'){const result=await api('/settings/connector',{method:'POST'});const text=JSON.stringify(result.config,null,2);S.tokens=await api('/tokens');renderShell(connectionPage());document.querySelector('#connector-code').innerHTML=`<pre tabindex="0" class="token-secret">${esc(text)}</pre><p class="hint">This configuration includes a new personal token and is shown only once. Paste it into WorkBuddy now.</p>`;try{await navigator.clipboard.writeText(text);toast('Connector configuration copied.');}catch{toast('Your connector configuration is shown below.');}}
+    else if(action==='download-connector'){const response=await fetch('/api/v1/settings/connector-package',{method:'POST',headers:{'X-CSRF-Token':S.csrf},credentials:'same-origin'});if(!response.ok)throw new Error('The connector package could not be created. Reload and try again.');const url=URL.createObjectURL(await response.blob());const link=document.createElement('a');link.href=url;link.download='trendforge-workbuddy.zip';link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);S.tokens=await api('/tokens');renderShell(connectionPage());toast('Connector downloaded. It contains a personal token; keep it private.');}
+    else if(action==='revoke-token'){if(!confirm('Revoke this connector token? WorkBuddy will lose access until you create a new configuration.'))return;await api(`/tokens/${el.dataset.id}`,{method:'DELETE'});S.tokens=await api('/tokens');renderShell(connectionPage());toast('Connector token revoked.');}
     else if(action==='download-model'){const job=await api('/settings/speech-model',{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()}});S.systemJob=job.id;document.querySelector('#model-job-status').innerHTML=jobBanner(job,true);toast('Speech model download started.');}
-    else if(action==='import-stock'){await api(`/projects/${pid}/stock/import`,{method:'POST',body:{query:S.stockQuery,video_id:Number(el.dataset.id),provider:el.dataset.provider}});dialog.close();await refreshProject();toast('Stock footage added.');}
+    else if(action==='import-stock'){const upload=await api(`/projects/${pid}/stock/import`,{method:'POST',body:{query:S.stockQuery,video_id:Number(el.dataset.id),provider:el.dataset.provider}});dialog.close();toast('Adding the stock clip. It is being checked…');S.uploadCancelled=false;await waitUpload(pid,upload.id);await refreshProject();toast('Stock footage added.');}
   });
 });
 
 document.addEventListener('submit',async event=>{
   const f=event.target;if(!(f instanceof HTMLFormElement))return;event.preventDefault();
   if(f.id==='auth-form'){
-    const values=Object.fromEntries(new FormData(f));if(f.dataset.setup==='true'&&values.password!==values.confirm_password){document.querySelector('#auth-error').textContent='The passwords do not match.';return;}
+    const values=Object.fromEntries(new FormData(f)),register=f.dataset.mode==='register',error=document.querySelector('#auth-error');
+    if(register&&values.password!==values.confirm_password){error.textContent='The passwords do not match.';return;}
     const submit=f.querySelector('[type=submit]');submit.disabled=true;
-    try{const result=await api(f.dataset.setup==='true'?'/setup':'/session',{method:'POST',body:{password:values.password}});S.csrf=result.csrf_token;await refreshData();await route();}catch(error){document.querySelector('#auth-error').textContent=error.message;}finally{submit.disabled=false;}return;
+    try{const result=await api(register?'/auth/register':'/session',{method:'POST',body:register?{username:values.username,password:values.password,invite_code:values.invite_code}:{username:values.username,password:values.password}});S.csrf=result.csrf_token;S.user=result.user;await refreshData();await route();}catch(err){error.textContent=err.message;}finally{submit.disabled=false;}return;
   }
   await busy('Saving your work',async()=>{
     if(f.id==='project-form'){
@@ -423,11 +497,14 @@ document.addEventListener('submit',async event=>{
     }else if(f.id==='research-form'){
       const body=Object.fromEntries(new FormData(f));body.period_days=Number(body.period_days);body.region='ID';body.language=S.project.language;
       const result=await api(`/projects/${S.project.id}/research`,{method:'POST',body});await refreshProject();toast(result.items?.length?`${result.items.length} references found.`:'No references found. Try another topic or continue with your own idea.');
-    }else if(f.id==='edited-video-form'){const body=new FormData(f);await api(`/projects/${S.project.id}/edited-video`,{method:'POST',headers:{'Idempotency-Key':crypto.randomUUID()},body});await refreshProject(false);await navigate(`/projects/${S.project.id}/subtitles`);toast('Preparing your finished edit for subtitles.');
+    }else if(f.id==='edited-video-form'){const file=f.querySelector('[name=file]').files[0],pid=S.project.id;S.uploadCancelled=false;toast('Uploading your finished edit…');const upload=await sendUpload(pid,file,'finished_edit',null);await refreshProject(false);if(!upload.job_id){toast(upload.message||'Your video was accepted. Start preparing it again from Footage.',true);return;}await navigate(`/projects/${pid}/subtitles`);toast('Preparing your finished edit for subtitles.');
     }else if(f.id==='posting-caption-form'){await api(`/projects/${S.project.id}/posting-caption`,{method:'POST',body:{text:new FormData(f).get('text'),expected_project_revision:S.project.revision}});f.removeAttribute('data-dirty');await refreshProject();toast('Posting caption saved.');
     }else if(f.id==='brief-form'){if(await saveBrief())toast('Brief saved.');}
     else if(f.id==='plan-form'){if(await savePlan())toast('Edit plan saved.');}
     else if(f.id==='caption-form'){if(await saveSubtitles())toast('Subtitles saved.');}
+    else if(f.id==='password-form'){
+      const values=Object.fromEntries(new FormData(f));if(values.new_password!==values.confirm_password){toast('The new passwords do not match.',true);return;}
+      await api('/auth/password',{method:'POST',body:{current_password:values.current_password,new_password:values.new_password}});f.reset();f.removeAttribute('data-dirty');toast('Password changed. Other devices have been signed out.');}
     else if(f.id==='speech-settings'){
       const body=Object.fromEntries(new FormData(f));for(const input of f.querySelectorAll('[data-secret]')){if(!input.value&&!input.dataset.remove)delete body[input.name];}
       S.settings=await api('/settings',{method:'PATCH',body});S.settings=await api('/settings');renderShell(connectionPage());toast('Connection settings saved.');
@@ -459,7 +536,10 @@ document.addEventListener('change',event=>{
     renderShell(projectPage());document.querySelector(`#upload-mode-${S.footageMode.mode}`)?.focus();return;
   }
   if(el.matches('[data-source]')){
-    if(el.checked)S.selected.add(el.dataset.source);else S.selected.delete(el.dataset.source);el.closest('.source-card').classList.toggle('selected',el.checked);document.querySelector('#selected-count').textContent=`${S.selected.size} references selected`;
+    if(el.checked&&S.selected.size>=MAX_REFERENCES){el.checked=false;toast(`Select up to ${MAX_REFERENCES} references. Deselect one to choose another.`,true);return;}
+    if(el.checked)S.selected.add(el.dataset.source);else S.selected.delete(el.dataset.source);el.closest('.source-card').classList.toggle('selected',el.checked);
+    document.querySelector('#selected-count').textContent=referenceCount();
+    document.querySelectorAll('[data-source]').forEach(box=>{if(!box.checked)box.disabled=S.selected.size>=MAX_REFERENCES;});
   }
   if(el.id==='rights-confirmed')S.rights=el.checked;
   if(el.id==='clip-input')uploadFiles([...el.files]);
@@ -499,4 +579,4 @@ setInterval(async()=>{
   }catch(error){if(error.code!=='UNAUTHORIZED')console.warn('Status refresh unavailable.');}finally{S.polling=false;}
 },1800);
 
-try{const session=await api('/session');S.csrf=session.csrf_token||'';if(session.authenticated){await refreshData();await route();}else renderAuth(session.setup_required);}catch(error){app.innerHTML=`<main class="boot" id="main"><div><h2>We couldn’t open your workspace.</h2><p>${esc(error.message)}</p><button class="btn btn-primary" id="reload-app">Try again</button></div></main>`;document.querySelector('#reload-app').addEventListener('click',()=>location.reload());}
+try{const session=await api('/session');S.csrf=session.csrf_token||'';S.user=session.user;S.registrationOpen=session.registration_open;if(session.authenticated){await refreshData();await route();}else renderAuth('login');}catch(error){app.innerHTML=`<main class="boot" id="main"><div><h2>We couldn’t open your workspace.</h2><p>${esc(error.message)}</p><button class="btn btn-primary" id="reload-app">Try again</button></div></main>`;document.querySelector('#reload-app').addEventListener('click',()=>location.reload());}

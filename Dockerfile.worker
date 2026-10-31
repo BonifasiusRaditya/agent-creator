@@ -1,0 +1,39 @@
+# TrendForge video worker: FFmpeg + faster-whisper, reading jobs from the shared
+# database (Turso) and files from object storage (Tencent COS).
+#
+#   docker build -f Dockerfile.worker -t trendforge-worker .
+#   docker run -d --restart unless-stopped --env-file .env.worker -v trendforge-work:/work trendforge-worker
+#
+# /work holds temporary job files, worker logs and the downloaded speech model.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 \
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    FFMPEG_BINARY=/usr/bin/ffmpeg \
+    TRENDFORGE_WORKER_DIR=/work \
+    TRENDFORGE_WORKER=external \
+    HF_HUB_DISABLE_XET=1
+
+# FFmpeg with libass for burned-in subtitles; Liberation Sans stands in for Arial.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg fonts-liberation fonts-dejavu-core fontconfig \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:0.5.11 /uv /bin/uv
+
+WORKDIR /app
+COPY pyproject.toml uv.lock ./
+RUN uv sync --frozen --no-dev --no-install-project
+COPY trendforge ./trendforge
+COPY scripts ./scripts
+RUN uv sync --frozen --no-dev
+
+RUN useradd --create-home --uid 10001 worker && mkdir -p /work && chown worker /work
+USER worker
+VOLUME ["/work"]
+
+HEALTHCHECK --interval=60s --timeout=10s --start-period=30s \
+    CMD /app/.venv/bin/python -c "import trendforge.worker" || exit 1
+
+CMD ["/app/.venv/bin/python", "-m", "trendforge.worker"]

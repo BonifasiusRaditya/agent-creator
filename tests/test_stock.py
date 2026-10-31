@@ -5,7 +5,7 @@ import subprocess
 import httpx
 import pytest
 
-from conftest import approve, brief, project
+from conftest import approve, brief, project, wait_upload
 from trendforge import stock
 from trendforge.config import Settings
 from trendforge.media import ffmpeg
@@ -21,8 +21,10 @@ def video(vid=42, **extra):
 
 
 def transport(monkeypatch, handler):
-    actual = httpx.AsyncClient
+    # Searches run in the website (async); the worker downloads chosen clips (sync).
+    actual, actual_sync = httpx.AsyncClient, httpx.Client
     monkeypatch.setattr(stock.httpx, "AsyncClient", lambda **kw: actual(transport=httpx.MockTransport(handler), **kw))
+    monkeypatch.setattr(stock.httpx, "Client", lambda **kw: actual_sync(transport=httpx.MockTransport(handler), **kw))
 
 
 def test_configuration_missing_key_and_redaction(client, monkeypatch):
@@ -126,8 +128,10 @@ def test_import_real_media_keeps_source_and_uses_cached_search(client, monkeypat
     unknown = client.post(base, json={'query': 'nature', 'video_id': 999, 'provider': 'pixabay'})
     assert unknown.status_code == 422
     response = client.post(base, json={'query': 'nature', 'video_id': 42, 'provider': 'pixabay'})
-    assert response.status_code == 201, response.text
-    asset = response.json()
+    assert response.status_code == 202, response.text
+    upload = wait_upload(client, p['id'], response.json()['id'])
+    assert upload['status'] == 'valid', upload
+    asset = next(a for a in client.get(f"/api/v1/projects/{p['id']}").json()['assets'] if a['id'] == upload['asset_id'])
     assert asset['source'] == asset['provenance']['provider'] == 'pixabay'
     assert asset['original_name'] == 'pixabay-42.mp4'
     assert asset['provenance']['url'] == 'https://pixabay.com/videos/id-42/'
@@ -153,10 +157,13 @@ def test_import_blocks_redirects_and_size_limit(client, monkeypatch):
     approve(client, p['id'], 'briefs', b['id'])
     base = f"/api/v1/projects/{p['id']}"
     body = {'query': 'nature', 'video_id': 42, 'provider': 'pixabay'}
-    assert client.post(base + '/stock/import', json=body).status_code == 422
+    redirected = client.post(base + '/stock/import', json=body)
+    assert redirected.status_code == 202
+    assert wait_upload(client, p['id'], redirected.json()['id'])['error']['code'] == 'STOCK_DOWNLOAD_FAILED'
     status[0] = 200
-    monkeypatch.setattr(importlib.import_module('trendforge.app'), 'MAX_FILE', 2)
-    assert client.post(base + '/stock/import', json=body).status_code == 413
+    monkeypatch.setattr(importlib.import_module('trendforge.media'), 'MAX_FILE', 2)
+    oversized = client.post(base + '/stock/import', json=body)
+    assert wait_upload(client, p['id'], oversized.json()['id'])['error']['code'] == 'FILE_TOO_LARGE'
     assert client.get(base + '/assets').json() == []
 
 

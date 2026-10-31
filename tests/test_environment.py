@@ -34,13 +34,17 @@ def test_environment_managed_settings_cannot_be_silently_overridden(client, monk
     assert refused.status_code == 409
     assert refused.json()['error']['code'] == 'ENV_MANAGED'
     assert client.app.state.settings.get('youtube_api_key') == 'owner-secret-key'
-    connector = client.get('/api/v1/settings/connector')
+    connector = client.post('/api/v1/settings/connector')
     assert 'owner-secret-key' not in connector.text
-    assert connector.json()['mcpServers']['trendforge']['cwd']
-    package = client.get('/api/v1/settings/connector-package')
+    server = connector.json()['config']['mcpServers']['trendforge']
+    assert server['cwd'] and server['env']['TRENDFORGE_TOKEN'].startswith('tf_')
+    package = client.post('/api/v1/settings/connector-package')
     assert package.status_code == 200
     with zipfile.ZipFile(io.BytesIO(package.content)) as archive:
         assert set(archive.namelist()) == {'connector-meta.json', 'mcp.json', 'icon.svg', 'skills/trendforge/SKILL.md'}
-        configuration = json.loads(archive.read('mcp.json'))
-        assert configuration == connector.json()
+        configuration = json.loads(archive.read('mcp.json'))['mcpServers']['trendforge']
+        # Each package carries its own personal token, never a provider key.
+        assert configuration['env']['TRENDFORGE_TOKEN'].startswith('tf_')
+        assert configuration['env']['TRENDFORGE_TOKEN'] != server['env']['TRENDFORGE_TOKEN']
         assert all(b'owner-secret-key' not in archive.read(name) for name in archive.namelist())
+    assert len(client.get('/api/v1/tokens').json()) == 2

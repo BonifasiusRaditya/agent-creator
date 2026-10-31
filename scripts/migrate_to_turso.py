@@ -17,7 +17,8 @@ def main():
     args = parser.parse_args()
     source_path = DATA / 'trendforge.sqlite3'
     # Existing login sessions are deliberately not exported. Sign in again after switching.
-    tables = ('projects', 'documents', 'jobs', 'events')
+    # Accounts and connector tokens move with the projects they own.
+    tables = ('users', 'api_tokens', 'projects', 'documents', 'jobs', 'events')
     if not source_path.is_file():
         print('No local database to migrate.')
         return
@@ -47,8 +48,9 @@ def main():
                     raise RuntimeError('Turso changed during migration. Rolled back.')
                 columns = [row[1] for row in source.execute(f'PRAGMA table_info({table})')]
                 placeholders = ','.join('?' for _ in columns)
-                for row in source.execute(f'SELECT * FROM {table} ORDER BY rowid'):
-                    c.execute(f'INSERT INTO {table} VALUES ({placeholders})', row)
+                names = ','.join(columns)
+                for row in source.execute(f'SELECT {names} FROM {table} ORDER BY rowid'):
+                    c.execute(f'INSERT INTO {table} ({names}) VALUES ({placeholders})', row)
                 if c.execute(f'SELECT COUNT(*) AS n FROM {table}').fetchone()['n'] != counts[table]:
                     raise RuntimeError('Migration row counts did not match. Rolled back.')
         print('Migration committed; local database and backup retained. Video files stay in the same data folder.')

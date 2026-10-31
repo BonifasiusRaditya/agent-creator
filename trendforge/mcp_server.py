@@ -5,15 +5,18 @@ from urllib.parse import urlencode
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-from .config import DATA, Settings
+from .models import REFERENCE_CONTEXT_FIELDS
 
 mcp = FastMCP("TrendForge", instructions="Create original short-form content with human approvals in the TrendForge website. Never claim a job is complete unless its status is succeeded.")
 base = os.environ.get("TRENDFORGE_URL", "http://127.0.0.1:8765").rstrip("/")
 
 
 def call(method, path, body=None, request_key=None):
-    settings = Settings(DATA)
-    headers = {"Authorization": "Bearer " + settings.get("service_token")}
+    # A personal connector token from Connections; it acts only on its owner's projects.
+    token = os.environ.get("TRENDFORGE_TOKEN", "").strip()
+    if not token:
+        return {"error": {"code": "CONNECTOR_TOKEN_MISSING", "message": "Set TRENDFORGE_TOKEN. Create a connector configuration in TrendForge Connections and use it in WorkBuddy."}}
+    headers = {"Authorization": "Bearer " + token}
     if request_key:
         headers["Idempotency-Key"] = request_key
     try:
@@ -78,8 +81,12 @@ def create_project(niche: str, audience: str, goal: str, duration_seconds: int =
 
 @mcp.tool()
 def get_project(project_id: str) -> dict:
-    """Read persisted context, current brief/plan, assets, approvals and job status."""
-    return call("GET", f"/projects/{project_id}")
+    """Read persisted context, current brief/plan, assets, approvals and job status. Research items are compact reference metadata."""
+    project = call("GET", f"/projects/{project_id}")
+    # Thumbnails, statistics and channel IDs only cost model context.
+    for run in project.get("research", []) if isinstance(project, dict) else []:
+        run["items"] = [{k: x.get(k) for k in REFERENCE_CONTEXT_FIELDS} for x in run.get("items", [])]
+    return project
 
 
 @mcp.tool()
@@ -92,7 +99,7 @@ def research_youtube(project_id: str, query: str, period_days: int = 7,
 
 @mcp.tool()
 def save_brief(project_id: str, brief: dict) -> dict:
-    """Save an original brief proposal. Required: title, hook, angle, script, cta, shots[3–5] with visual/narration/duration_seconds. Timings total target; source_video_ids must come from research. Does not approve."""
+    """Save an original brief proposal. Required: title, hook, angle, script, cta, shots[3–5] with visual/narration/duration_seconds. Timings total target; source_video_ids (at most 10) must come from research. Does not approve."""
     project = get_project(project_id)
     if "error" in project:
         return project

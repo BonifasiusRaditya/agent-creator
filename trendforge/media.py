@@ -7,18 +7,17 @@ import sys
 import textwrap
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
 
 import av
+import httpx
 import imageio_ffmpeg
 
-from .db import now
+from .db import invalidation, now
 from .errors import AppError
-
-MAX_FILE = 100 * 1024 * 1024
-MAX_TOTAL = 500 * 1024 * 1024
+from .models import MAX_FILE, MAX_TOTAL
+from .storage import LocalStorage
 
 
 @lru_cache(maxsize=1)
@@ -102,28 +101,17 @@ class Cancelled(Exception):
 
 
 class MediaWorker:
-    def __init__(self, db, settings, directory):
-        self.db, self.settings, self.directory = db, settings, Path(directory)
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="trendforge-media")
-        self.cancel_events = {}
-        self.lock = threading.Lock()
-        self.db.interrupt_jobs()
+    """Runs one claimed job. Inputs are read from storage, outputs written back to storage.
 
-    def submit(self, job):
-        event = threading.Event()
-        with self.lock:
-            self.cancel_events[job["id"]] = event
-        self.executor.submit(self.run, job["id"], event)
+    `scratch` is this worker's own working folder (FFmpeg needs real files). With local
+    storage it is the data folder itself, so outputs are already in place.
+    """
 
-    def cancel(self, jid):
-        with self.lock:
-            event = self.cancel_events.get(jid)
-            if event:
-                event.set()
-        job = self.db.job(jid)
-        if job["status"] in {"queued", "running"}:
-            return self.db.update_job(jid, {"status": "cancelling", "stage": "Stopping safely"})
-        return job
+    def __init__(self, db, settings, storage, scratch):
+        self.db, self.settings, self.storage = db, settings, storage
+        self.directory = Path(scratch)
+        self.in_place = isinstance(storage, LocalStorage) and storage.root == self.directory.resolve()
+        self.wake = lambda: None
 
     def stage(self, jid, text):
         self.db.update_job(jid, {"stage": text, "progress_percent": None})
@@ -132,7 +120,7 @@ class MediaWorker:
         if event.is_set():
             raise Cancelled()
         logfile = Path(cwd) / "process.log"
-        with logfile.open("wb") as log:
+        with logfile.open("ab") as log:
             process = subprocess.Popen([str(x) for x in args], cwd=str(cwd), stdin=subprocess.DEVNULL,
                 stdout=log, stderr=subprocess.STDOUT,
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
@@ -149,19 +137,25 @@ class MediaWorker:
                         raise Cancelled()
                     raise AppError("This processing step took too long. Your saved clips are safe; try again.", "PROCESS_TIMEOUT")
             if process.returncode:
-                # Keep the full diagnostic on the device; never expose commands or private paths to the client.
-                raise AppError("This processing step could not finish. Check the local job log, then try again.", "PROCESS_FAILED")
+                # Keep the full diagnostic with the worker; never expose commands or private paths to the client.
+                raise AppError("This processing step could not finish. Check the worker's job log, then try again.", "PROCESS_FAILED")
 
-    def run(self, jid, event):
-        root = None
+    def save(self, root, name, jid, content_type):
+        """Store a finished output under the job's key and return that key."""
+        key = f"jobs/{jid}/{name}"
+        self.storage.put_file(key, root / name, content_type)
+        return key
+
+    def run(self, job, event):
+        jid = job["id"]
+        root = self.directory / "jobs" / jid
         try:
-            job = self.db.job(jid)
+            root.mkdir(parents=True, exist_ok=True)
             if event.is_set():
                 raise Cancelled()
-            self.db.update_job(jid, {"status": "running", "started_at": now()})
-            root = self.directory / "jobs" / jid
-            root.mkdir(parents=True, exist_ok=True)
-            if job["type"] == "prepare":
+            if job["type"] == "ingest":
+                output = self.ingest(job, root, event)
+            elif job["type"] == "prepare":
                 output = self.prepare(job, root, event)
             elif job["type"] == "edited_prepare":
                 output = self.prepare_edited(job, root, event)
@@ -177,8 +171,8 @@ class MediaWorker:
                 output = {"model": job["input"]["model"]}
             else:
                 raise AppError("Unknown processing step.")
-            with self.db.lock, self.lock:
-                if event.is_set():
+            with self.db.lock:
+                if event.is_set() or self.db.job(jid)["status"] != "running":
                     raise Cancelled()
                 self.db.update_job(jid, {"status": "succeeded", "stage": "Complete", "progress_percent": 100,
                                         "output": output, "finished_at": now()})
@@ -197,20 +191,136 @@ class MediaWorker:
             self.db.update_job(jid, {"status": "failed", "stage": "Needs attention", "finished_at": now(),
                                     "error": {"code": "PROCESS_FAILED", "message": "Processing stopped unexpectedly. Your saved inputs are safe; try this step again."}})
         finally:
-            with self.lock:
-                self.cancel_events.pop(jid, None)
-            # Normalized intermediates are never checkpoints; preserve draft/audio referenced by a saved document.
-            if root:
-                for temp in root.glob("segment_*.mp4"):
-                    temp.unlink(missing_ok=True)
-                if self.db.job(jid)["status"] in {"failed", "cancelled"}:
-                    for filename in ("final.mp4", "export.ass", "export.srt"):
-                        (root / filename).unlink(missing_ok=True)
+            self.cleanup(jid, root)
+
+    def cleanup(self, jid, root):
+        if self.in_place:
+            # Normalized intermediates are never checkpoints; drafts/exports referenced by documents stay.
+            for temp in root.glob("segment_*.mp4"):
+                temp.unlink(missing_ok=True)
+            try:
+                status = self.db.job(jid)["status"]
+            except AppError:
+                return
+            if status in {"failed", "cancelled"}:
+                for filename in ("final.mp4", "export.ass", "export.srt"):
+                    (root / filename).unlink(missing_ok=True)
+            return
+        # Remote storage holds every kept output, so the worker's scratch folder is temporary.
+        # Its diagnostic log is kept with the worker (cleaned after seven days).
+        logs = self.directory / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        if (root / "process.log").is_file():
+            shutil.move(str(root / "process.log"), logs / f"{jid}.log")
+        shutil.rmtree(root, ignore_errors=True)
 
     def encode_args(self):
         return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-threads", "2",
                 "-pix_fmt", "yuv420p", "-r", "30", "-c:a", "aac", "-ar", "48000", "-ac", "2",
                 "-movflags", "+faststart"]
+
+    # Upload checks -------------------------------------------------------------
+
+    def download_stock(self, url, provider, target, event):
+        from .stock import validate_stock_url
+        validate_stock_url(url, provider)
+        size = 0
+        try:
+            with httpx.Client(timeout=90, follow_redirects=False) as client, client.stream("GET", url) as response:
+                if response.status_code != 200:
+                    raise AppError("The stock file could not be downloaded. Use your own footage or try another clip.", "STOCK_DOWNLOAD_FAILED")
+                with target.open("wb") as output:
+                    for chunk in response.iter_bytes():
+                        if event.is_set():
+                            raise Cancelled()
+                        size += len(chunk)
+                        if size > MAX_FILE:
+                            raise AppError("This stock clip is larger than 100 MiB.", "FILE_TOO_LARGE")
+                        output.write(chunk)
+        except httpx.HTTPError:
+            raise AppError("The stock download was interrupted. Your uploaded clips are safe.", "STOCK_DOWNLOAD_FAILED") from None
+        return target
+
+    def ingest(self, job, root, event):
+        """Check an uploaded (or stock) video, then add it to the project."""
+        pid, jid = job["project_id"], job["id"]
+        upload = self.db.doc(pid, job["input"]["upload_id"], "upload")
+        key = upload["file_ref"]
+        try:
+            self.stage(jid, "Checking your video")
+            if upload.get("source_url"):
+                local = self.download_stock(upload["source_url"], upload["provenance"]["provider"], root / ("stock" + Path(key).suffix), event)
+                self.storage.put_file(key, local, "video/mp4")
+            else:
+                local = self.storage.fetch(key, root)
+            size = local.stat().st_size
+            if not 0 < size <= MAX_FILE:
+                raise AppError("This file is larger than 100 MiB.", "FILE_TOO_LARGE")
+            metadata = validate_upload(local, upload["original_name"])
+            with local.open("rb") as stream:
+                checksum = hashlib.file_digest(stream, "sha256").hexdigest()
+            if event.is_set():
+                raise Cancelled()
+            with self.db.lock:
+                p = self.db.project(pid)
+                current = self.db.doc(pid, upload["id"], "upload")
+                if current["status"] != "validating":
+                    raise Cancelled()
+                if self.db.active_job(pid):
+                    raise AppError("Wait for the current video job to finish, then upload again.", "JOB_ACTIVE")
+                if p.get("brief_id") != upload["brief_id"] or self.db.doc(pid, p["brief_id"], "brief")["status"] != "approved":
+                    raise AppError("Your brief changed while this video was uploading. Approve it and upload again.", "STALE_BRIEF")
+                if upload["purpose"] == "clip":
+                    result = self.add_clip(p, upload, metadata, size, checksum)
+                else:
+                    result = self.add_finished_edit(p, upload, metadata, size, checksum)
+            self.db.event(pid, "asset_uploaded" if upload["purpose"] == "clip" else "edited_video_uploaded", result)
+            return result
+        except BaseException as exc:
+            # A rejected or cancelled upload never stays in storage.
+            if self.db.doc(pid, upload["id"], "upload")["status"] == "validating":
+                error = {"code": exc.code, "message": exc.message} if isinstance(exc, AppError) else (
+                    None if isinstance(exc, Cancelled) else {"code": "PROCESS_FAILED", "message": "This video could not be checked. Try uploading it again."})
+                self.db.update_doc(pid, upload["id"], {"status": "cancelled" if error is None else "rejected", "error": error, "finished_at": now()})
+                try:
+                    self.storage.delete(key)
+                except AppError:
+                    pass
+            raise
+
+    def add_clip(self, p, upload, metadata, size, checksum):
+        pid = p["id"]
+        assets = self.db.docs(pid, "asset")
+        if len(assets) >= 5 or sum(x["bytes"] for x in assets) + size > MAX_TOTAL:
+            raise AppError("Use at most five clips and 500 MiB per project.", "PROJECT_LIMIT")
+        if sum(x["duration_seconds"] for x in assets) + metadata["duration_seconds"] > 600.1:
+            raise AppError("Keep the total footage duration at or below ten minutes.", "DURATION_LIMIT")
+        provenance = upload.get("provenance")
+        asset = self.db.add_doc(pid, "asset", {**metadata, "original_name": upload["original_name"], "bytes": size,
+            "sha256": checksum, "file_ref": upload["file_ref"], "rights_confirmed_at": upload["rights_confirmed_at"],
+            "source": provenance.get("provider", "pexels") if provenance else "upload", "provenance": provenance,
+            "validation_status": "valid", "upload_id": upload["id"]})
+        self.db.update_project(pid, {**invalidation("asset"), "phase": "ASSETS_READY" if len(assets) + 1 >= 3 else "BRIEF_APPROVED"})
+        self.db.update_doc(pid, upload["id"], {"status": "valid", "asset_id": asset["id"], "finished_at": now()})
+        return {"asset_id": asset["id"]}
+
+    def add_finished_edit(self, p, upload, metadata, size, checksum):
+        pid = p["id"]
+        item = self.db.add_doc(pid, "edited_video", {"file_ref": upload["file_ref"], "metadata": metadata, "bytes": size,
+            "sha256": checksum, "brief_id": upload["brief_id"], "rights_confirmed_at": upload["rights_confirmed_at"],
+            "upload_id": upload["id"]})
+        result = {"edited_video_id": item["id"]}
+        try:
+            prepare, _ = self.db.start_job(pid, "edited_prepare", {"edited_video_id": item["id"],
+                "speech_model": self.settings.get("speech_model")}, f"edited-prepare-{upload['id']}")
+            result["job_id"] = prepare["id"]
+            self.wake()
+        except AppError as exc:
+            result["message"] = exc.message  # The creator can start it again from Footage.
+        self.db.update_doc(pid, upload["id"], {"status": "valid", **result, "finished_at": now()})
+        return result
+
+    # Video jobs -----------------------------------------------------------------
 
     def prepare(self, job, root, event):
         pid, jid = job["project_id"], job["id"]
@@ -223,8 +333,9 @@ class MediaWorker:
         for i, segment in enumerate(segments):
             self.stage(jid, f"Preparing clip {i + 1} of {len(segments)}")
             asset = assets[segment["asset_id"]]
+            source = self.storage.fetch(asset["file_ref"], root)
             length = segment["out_seconds"] - segment["in_seconds"]
-            args = [ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-ss", str(segment["in_seconds"]), "-i", self.directory / asset["file_ref"]]
+            args = [ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-ss", str(segment["in_seconds"]), "-i", source]
             if not asset["has_audio"]:
                 args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
             args += ["-t", str(length), "-map", "0:v:0", "-map", "0:a:0" if asset["has_audio"] else "1:a:0",
@@ -242,8 +353,8 @@ class MediaWorker:
         metadata = self.validate_final(root / "draft.mp4", duration, root, event)
         self.command([ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-i", "draft.mp4", "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "audio.wav"], root, event)
         draft = self.db.add_doc(pid, "draft", {"plan_id": plan["id"], "brief_id": plan["brief_revision_id"],
-            "job_id": jid, "duration_seconds": duration, "file_ref": str((root / "draft.mp4").relative_to(self.directory)),
-            "audio_ref": str((root / "audio.wav").relative_to(self.directory)), "metadata": metadata})
+            "job_id": jid, "duration_seconds": duration, "file_ref": self.save(root, "draft.mp4", jid, "video/mp4"),
+            "audio_ref": self.save(root, "audio.wav", jid, "audio/wav"), "metadata": metadata})
         self.db.update_project(pid, {"draft_id": draft["id"], "subtitle_id": None, "export_id": None, "phase": "DRAFT_READY"})
         self.db.update_job(jid, {"output": {"draft_id": draft["id"]}})
         track = self.speech_track(pid, draft, root, jid, event, job["input"].get("speech_model"))
@@ -257,7 +368,7 @@ class MediaWorker:
         if shutil.disk_usage(root).free < 1024 ** 3:
             raise AppError("Keep at least 1 GB free for video processing.", "DISK_SPACE")
         self.stage(jid, "Preparing your finished edit for subtitles")
-        args = [ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-i", self.directory / item["file_ref"]]
+        args = [ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-i", self.storage.fetch(item["file_ref"], root)]
         if not metadata["has_audio"]:
             args += ["-f", "lavfi", "-i", "anullsrc=r=48000:cl=stereo"]
         args += ["-t", str(duration), "-map", "0:v:0", "-map", "0:a:0" if metadata["has_audio"] else "1:a:0",
@@ -268,8 +379,8 @@ class MediaWorker:
         self.command([ffmpeg(), "-hide_banner", "-loglevel", "warning", "-y", "-i", "draft.mp4", "-vn", "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", "audio.wav"], root, event)
         draft = self.db.add_doc(pid, "draft", {"plan_id": None, "brief_id": item["brief_id"],
             "source": "external_edit", "edited_video_id": item["id"], "job_id": jid,
-            "duration_seconds": duration, "file_ref": str((root / "draft.mp4").relative_to(self.directory)),
-            "audio_ref": str((root / "audio.wav").relative_to(self.directory)), "metadata": final_metadata})
+            "duration_seconds": duration, "file_ref": self.save(root, "draft.mp4", jid, "video/mp4"),
+            "audio_ref": self.save(root, "audio.wav", jid, "audio/wav"), "metadata": final_metadata})
         self.db.update_project(pid, {"plan_id": None, "draft_id": draft["id"], "subtitle_id": None,
             "export_id": None, "ready_confirmed_at": None, "phase": "DRAFT_READY"})
         self.db.update_job(jid, {"output": {"draft_id": draft["id"]}})
@@ -279,7 +390,7 @@ class MediaWorker:
     def speech_track(self, pid, draft, root, jid, event, model=None):
         self.stage(jid, "Transcribing Indonesian speech")
         self.command([sys.executable, "-m", "trendforge.transcribe", "--model", model or self.settings.get("speech_model"),
-            "--cache", self.directory / "models", "--input", self.directory / draft["audio_ref"],
+            "--cache", self.directory / "models", "--input", self.storage.fetch(draft["audio_ref"], root),
             "--output", "transcript.json", "--duration", str(draft["duration_seconds"])], root, event, 600)
         result = json.loads((root / "transcript.json").read_text(encoding="utf-8"))
         track = self.db.add_doc(pid, "subtitle", {**result, "draft_id": draft["id"], "language": "id", "source": "asr", "status": "draft"})
@@ -296,7 +407,7 @@ class MediaWorker:
         draft = self.db.doc(pid, job["input"]["draft_id"], "draft")
         track = self.db.doc(pid, job["input"]["subtitle_id"], "subtitle")
         self.stage(jid, "Rendering your final video")
-        source = self.directory / draft["file_ref"]
+        source = self.storage.fetch(draft["file_ref"], root)
         if track["cues"]:
             write_ass(track["cues"], root / "export.ass", job["input"].get("large_text", False))
             write_srt(track["cues"], root / "export.srt")
@@ -311,12 +422,12 @@ class MediaWorker:
             raise Cancelled()
         with (root / "final.mp4").open("rb") as final_file:
             checksum = hashlib.file_digest(final_file, "sha256").hexdigest()
+        size = (root / "final.mp4").stat().st_size
         export = self.db.add_doc(pid, "export", {"job_id": jid, "draft_id": draft["id"], "plan_id": draft["plan_id"],
             "brief_id": draft["brief_id"], "subtitle_id": track["id"], "duration_seconds": draft["duration_seconds"],
-            "mp4_ref": str((root / "final.mp4").relative_to(self.directory)),
-            "srt_ref": str((root / "export.srt").relative_to(self.directory)) if track["cues"] else None,
-            "bytes": (root / "final.mp4").stat().st_size, "sha256": checksum,
-            "metadata": metadata, "validated_at": now()})
+            "mp4_ref": self.save(root, "final.mp4", jid, "video/mp4"),
+            "srt_ref": self.save(root, "export.srt", jid, "application/x-subrip") if track["cues"] else None,
+            "bytes": size, "sha256": checksum, "metadata": metadata, "validated_at": now()})
         return {"export_id": export["id"]}
 
     def validate_final(self, path, duration, root, event):
@@ -325,10 +436,3 @@ class MediaWorker:
             raise AppError("The exported file did not pass the video profile checks. Try processing it again.", "OUTPUT_VALIDATION_FAILED")
         self.command([ffmpeg(), "-hide_banner", "-loglevel", "error", "-xerror", "-i", path, "-f", "null", "-"], root, event)
         return meta
-
-    def shutdown(self):
-        with self.lock:
-            for event in self.cancel_events.values():
-                event.set()
-        self.executor.shutdown(wait=True, cancel_futures=True)
-

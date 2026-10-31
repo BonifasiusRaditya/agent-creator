@@ -1,4 +1,5 @@
-from conftest import approve, brief, project
+from conftest import approve, brief, project, upload_video
+from test_workbuddy import connector_headers
 
 
 def test_sessions_csrf_origin_and_secret_redaction(client):
@@ -14,7 +15,7 @@ def test_sessions_csrf_origin_and_secret_redaction(client):
     assert "test-secret-never-returned" not in response.text
     assert response.json()["ai_key_configured"]
     assert "test-secret-never-returned" not in (client.app.state.settings.path).read_bytes().decode("ascii")
-    assert client.get("/api/v1/settings/connector").status_code == 200
+    assert client.post("/api/v1/settings/connector").status_code == 200
     client.cookies.clear()
     assert client.get("/api/v1/projects").status_code == 401
 
@@ -22,8 +23,7 @@ def test_sessions_csrf_origin_and_secret_redaction(client):
 def test_human_approval_source_validation_and_revisions(client):
     p = project(client)
     b = brief(client, p)
-    token = client.app.state.settings.get("service_token")
-    headers = {"Authorization": "Bearer " + token}
+    headers = connector_headers(client)
     assert client.post(f"/api/v1/projects/{p['id']}/briefs/{b['id']}/approve", headers=headers,
         json={"expected_project_revision": 2, "confirmation": True}).status_code == 403
     approve(client, p["id"], "briefs", b["id"])
@@ -54,9 +54,11 @@ def test_invalid_media_and_cross_project_access(client):
     p = project(client)
     b = brief(client, p)
     approve(client, p["id"], "briefs", b["id"])
-    response = client.post(f"/api/v1/projects/{p['id']}/assets", files={"file": ("bad.mp4", b"not a video", "video/mp4")}, data={"rights_confirmed": "true"})
-    assert response.status_code == 422
-    assert response.json()["error"]["code"] == "INVALID_MEDIA"
+    rejected = upload_video(client, p["id"], b"not a video", "bad.mp4", expect="rejected")
+    assert rejected["error"]["code"] == "INVALID_MEDIA"
+    assert client.get(f"/api/v1/projects/{p['id']}/assets").json() == []
+    # The rejected file is removed from storage.
+    assert not any(client.app.state.storage.list(f"projects/{p['id']}"))
     second = project(client)
     assert client.get(f"/api/v1/projects/{second['id']}/briefs/{b['id']}").status_code == 404
     assert client.request("DELETE", f"/api/v1/projects/{p['id']}", json={"confirmation": False}).status_code in {400, 422}
