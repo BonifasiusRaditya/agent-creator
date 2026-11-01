@@ -1164,6 +1164,8 @@ def create_app(directory=None):
         if db().job(export["job_id"])["status"] != "succeeded" or not export.get(kind + "_ref"):
             raise AppError("This file is not available.", "FILE_NOT_FOUND", 404)
         project = db().project(pid)
+        if project.get('creator_source_id') and (eid != project.get('export_id') or export['brief_id'] != project.get('brief_id') or export['subtitle_id'] != project.get('subtitle_id')):
+            raise AppError('This export belongs to an older script or subtitle approval. Export the current reviewed video.', 'STALE_EXPORT', 409)
         filename = re.sub(r"[^A-Za-z0-9_-]", "-", project["niche"])[:60] + "-" + eid[-6:] + "." + kind
         response = storage().response(export[kind + "_ref"], "video/mp4" if kind == "mp4" else "application/x-subrip",
                                       filename if download else None)

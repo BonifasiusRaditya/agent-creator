@@ -39,9 +39,25 @@ def test_video_bridge_scope_approval_and_staleness(client,monkeypatch):
     b=bind(client,pid,run)
     assert b['script']=='Senja is a ginger drink.'
     assert bind(client,pid,run)['id']==b['id']
+    client.app.state.db.update_doc(pid,b['id'],{'script':'An unreviewed medical promise.'})
+    assert client.post(f'/api/v1/projects/{pid}/prepare-jobs',json={}).status_code==409
+    client.app.state.db.update_doc(pid,b['id'],{'script':'Senja is a ginger drink.'})
     client.post(base+'/runs',headers={'Idempotency-Key':'changed-content'})
     assert client.get(f'/api/v1/projects/{pid}').json()['brief_id'] is None
     assert client.post(f'/api/v1/projects/{pid}/prepare-jobs',json={}).status_code==409
+
+
+def test_only_real_research_ids_can_supply_creative_inspiration(client):
+    pid,base,source=setup(client)
+    body={k:v for k,v in source.items() if k not in {'id','project_id','created_at','fact_map','inspiration_references'}}
+    body['inspiration_video_ids']=['made-up-id']
+    assert client.post(base+'/source',json=body).status_code==422
+    client.app.state.db.add_doc(pid,'research',{'items':[{'video_id':'test-real-id','title':'An example storytelling format','channel_title':'Synthetic channel','watch_url':'https://www.youtube.com/watch?v=test-real-id'}]})
+    body['inspiration_video_ids']=['test-real-id']
+    result=client.post(base+'/source',json=body)
+    assert result.status_code==201,result.text
+    assert result.json()['fact_map']==source['fact_map']
+    assert result.json()['inspiration_references'][0]['title']=='An example storytelling format'
 
 
 def test_reviewed_content_to_real_mp4_and_source_invalidation(client,monkeypatch,tmp_path):
@@ -88,5 +104,11 @@ def test_reviewed_content_to_real_mp4_and_source_invalidation(client,monkeypatch
     source=client.get(creator).json()['source']
     source={k:v for k,v in source.items() if k not in {'id','project_id','created_at','fact_map','inspiration_references'}}
     assert client.post(creator+'/source',json=source).status_code==201
+    assert client.get(base+f'/exports/{eid}/files/mp4').status_code==409
+    client.post(creator+'/runs',headers={'Idempotency-Key':'replacement-source'})
+    replacement=wait(client,creator)
+    accepted=client.post(creator+f"/runs/{replacement['id']}/approve",json={'revision':replacement['revision'],'confirmation':True})
+    assert accepted.status_code==200,accepted.text
+    bind(client,pid,accepted.json())
     assert client.get(base+f'/exports/{eid}/files/mp4').status_code==409
     (output.parent/'automated-report.json').write_text(json.dumps({'metadata':meta,'bytes':len(response.content),'source_change_revokes_release':True},indent=2))

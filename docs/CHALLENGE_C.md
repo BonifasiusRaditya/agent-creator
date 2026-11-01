@@ -1,6 +1,6 @@
 # Challenge C implementation and submission evidence
 
-Reviewed against handbook pp.8–11 and general submission/accountability requirements. Current workflow: **Product launch**, for beginner creators and small sellers. This supersedes the earlier trend-to-video scope in the original PRD. The older video backend remains compatible with existing records, but it is absent from current navigation and the exposed agent tools.
+Reviewed against handbook pp.8–11 and general submission/accountability requirements. Current workflow: **Product launch**, for beginner creators and small sellers. The reviewed-content workflow is now connected to **Video studio** for a finished vertical MP4, with optional YouTube creative inspiration and existing stock search. Product claims remain source-bound. See [complete video evidence](COMPLETE_VIDEO.md) for the new acceptance run and its limitations. Agents still cannot approve or release video files.
 
 ## Requirement matrix
 

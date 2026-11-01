@@ -1,5 +1,7 @@
 # Creator architecture and contracts
 
+The website now includes the full video handoff documented in [COMPLETE_VIDEO.md](COMPLETE_VIDEO.md). Operator-only `POST /projects/{p}/creator/video-brief` accepts the approved run revision, language, duration, current project revision and explicit confirmation. It derives a video brief directly from the approved short-video script. Upload, trim/sequence approval, prepare/transcribe jobs, subtitle correction/approval, export and MP4/SRT downloads reuse the original media API and worker. Source/content changes invalidate the bound video timeline and release; middleware blocks stale or unreviewed output. Selected YouTube reference IDs are checked against this project's actual research and snapshotted as creative context, not factual product evidence.
+
 The existing FastAPI service, account security and document database are reused. The new workflow adds one router and a small browser module. No agent framework, vector database, hosted image API or extra model subscription is required. Gemini uses its native generation API through the existing HTTP client; OpenAI-compatible providers remain supported. WorkBuddy can execute the same role contracts through five stdio MCP tools.
 
 ```mermaid

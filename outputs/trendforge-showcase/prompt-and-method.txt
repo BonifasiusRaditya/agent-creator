@@ -1,0 +1,9 @@
+TrendForge AI showcase cover
+Generation method: built-in image_gen tool (generation, followed by precise cleanup).
+Delivery: JPEG, 380 x 216 pixels, RGB, quality 100.
+Palette: orange #FF6A00 and black #101010; flat export with antialiased boundaries.
+
+Design prompt: Premium minimalist showcase cover, centered custom symbol combining a right-pointing play icon with an upward trend arrow in negative space, dominant single-line text "TrendForge AI", solid orange and black, premium sans-serif typography, no gradients, no extra text or decoration.
+
+Final cleanup prompt:
+Precise production cleanup of this cover. Keep the logo silhouette, all letterforms and exact text 'TrendForge AI', composition, margins, spacing, size, and layout IDENTICAL. Change ONLY the flatness of color: replace the entire background with an absolutely uniform, perfectly flat single black color #101010. Replace every orange foreground area (symbol and title) with the same perfectly uniform flat orange #FF6A00. Remove ALL mottling, grain, noise, tonal changes, gradient, glow, highlights, shadows and texture. Think of a strictly two-color vector brand graphic exported to a bitmap, with only antialiasing at boundaries. No photographic material or rendered material properties. Do not redraw or move any element, do not add any elements or text. Result is the actual full-bleed finished graphic.

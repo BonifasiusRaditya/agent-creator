@@ -1,8 +1,8 @@
 # TrendForge
 
-Create source-grounded content with a Planner, Writer and Reviewer. Built for beginner creators who want useful ideas, less production time and confidence in what they share.
+Create source-grounded content and finished vertical videos with a Planner, Writer and Reviewer. Built for beginner creators who want useful ideas, less production time and confidence in what they share.
 
-The English interface uses a black and orange theme. The current product-launch workflow creates short-video scripts, social captions and marketplace listings in Bahasa Indonesia, English and Mandarin. Every factual line cites the supplied product sheet. Review failures return to the Writer, with at most three rounds before human escalation. Only the creator approves and exports.
+The English interface uses a black and orange theme. The workflow researches YouTube for creative inspiration, creates source-grounded scripts/captions/listings in Bahasa Indonesia, English and Mandarin, reviews them, then produces an MP4 from 3–5 uploaded clips. Review failures return to the Writer, with at most three rounds before human escalation. Only the creator approves and releases content.
 
 ## Run
 
@@ -42,6 +42,21 @@ Turso is selected automatically when its URL/token are configured. A failed Turs
 5. Review all output, tick the confirmation and approve the exact revision. Download a ZIP with text, SVG covers, source/rule snapshots and the audit. Upload manually wherever you choose.
 6. Edits always trigger fresh review. Tone preferences inferred from edits remain proposals until separately approved. Approved examples from your own projects guide future drafts.
 
+## Make a finished video
+
+1. Optionally open **Trend research**, search YouTube and select up to 10 creative references. Save Source & rules afterward. Titles and channel metadata guide creative angles; factual claims still use your product facts only.
+2. After approving a Short-video script, open **Video studio** or **Make a video**. Select a script language and 30/45/60-second target, then confirm **Use approved script**.
+3. Upload 3–5 owned/licensed H.264 MP4/MOV clips, 3–120 seconds each, up to 100 MiB per clip. Total footage must cover the chosen target. Optional stock search uses the existing configured Pixabay/Pexels key and retains provenance.
+4. Select **Create automatic cut**, or edit each clip's order and trim points. Approve the cut, then **Render draft & generate subtitles**. FFmpeg fits framing into 9:16, joins/trims the clips, applies opening/closing fades and normalizes original audio.
+5. Listen to the draft and correct actual faster-whisper Indonesian transcription. Save edits, check the review confirmation and approve subtitles. No-speech videos require an explicit no-speech decision. The proposed script is never substituted for the transcript.
+6. Select **Export MP4**, preview the result, and download MP4/SRT plus the approved posting caption. The output is 1080×1920, 30 fps, H.264/AAC with burned-in approved subtitles. Upload manually to Shorts/Reels.
+
+Content/source changes invalidate the linked video brief and downstream release. Processing, export and download enforce the current approved script, including evidence validity. Existing uploaded assets remain reusable; previous files cannot be released against an unapproved replacement source.
+
+For a single local server set `TRENDFORGE_WORKER=embedded` (default). A configured external worker must be started separately with `uv run python -m trendforge.worker` using the same database/storage. The speech model downloads once and is cached; it needs no API key. The video uses the creator's actual clips and audio; optional generative video and TTS services are not required.
+
+See [complete video acceptance evidence](docs/COMPLETE_VIDEO.md), including an actual browser-uploaded speech/ASR/export run and its limits.
+
 ## WorkBuddy
 
 Gemini runs directly from the website. To use WorkBuddy instead, select `TRENDFORGE_AI_ENGINE=workbuddy` in .env and restart. In Connections generate your personal connector configuration and install it in WorkBuddy. The backend must remain reachable from that WorkBuddy process. Start a website run and copy its WorkBuddy task. The five MCP tools exchange each role's schema-validated result; human approval/export are deliberately absent. Connector tokens can be revoked through the existing tokens API.
@@ -57,4 +72,4 @@ uv run python -m scripts.check_creator_live
 
 The second command intentionally calls Gemini with fictional data on an isolated SQLite database and saves real provider evidence under `test-results/creator-live`. It does not change application accounts or projects. It creates a local test account `creator-tester` / `CreatorLocalTest!2026` only in that test database. Standard tests simulate model responses; Turso destructive tests require a separate test database and refuse the production URL.
 
-Existing video endpoints/data remain compatible, while the current navigation and MCP toolset focus on Challenge C. Previous setup documentation is archived in [the legacy reference](docs/LEGACY_VIDEO_WORKSPACE.md). Existing multi-user accounts continue to use their original passwords. Older unowned projects require the explicit claim procedure in that reference.
+Existing video endpoints/data remain compatible. The website now includes both the Challenge C content flow and Video studio; MCP tools retain the agent-only workflow and cannot release a connected creator video's files. Previous setup documentation is archived in [the legacy reference](docs/LEGACY_VIDEO_WORKSPACE.md). Existing multi-user accounts continue to use their original passwords. Older unowned projects require the explicit claim procedure in that reference.

@@ -2,7 +2,7 @@
 
 **Challenge C: The Creator Agent — Tencent Cloud Hackathon Indonesia 2026**
 
-> **Amendemen implementasi — 1 November 2026:** cakupan aktif mengikuti [matriks Challenge C](docs/CHALLENGE_C.md) dan [arsitektur saat ini](docs/CREATOR_ARCHITECTURE.md): sumber fakta produk → Planner → Writer → Reviewer → revisi maksimal tiga putaran → persetujuan manusia → ekspor konten dan cover. Antarmuka berbahasa Inggris dengan tema hitam/oranye. Gemini API menjadi engine yang disetujui untuk penggunaan langsung; konektor WorkBuddy tetap tersedia, sementara bukti penggunaan WorkBuddy nyata masih diperlukan untuk submission. Bagian riset YouTube, unggahan/edit video dan subtitle di bawah adalah rencana historis, bukan alur produk aktif. Kriteria penerimaan dan bukti terkini ada di [hasil pengujian](docs/CREATOR_TEST_RESULTS.md).
+> **Amendemen implementasi — 1 November 2026:** cakupan aktif menghubungkan riset YouTube sebagai inspirasi, fakta produk terverifikasi, Planner–Writer–Reviewer, revisi maksimal tiga putaran, persetujuan konten, unggah 3–5 klip, trim/merge/efek FFmpeg, transkripsi faster-whisper, persetujuan subtitle, dan ekspor MP4 vertikal 1080×1920. Antarmuka Inggris dengan tema hitam/oranye. Gemini adalah engine yang disetujui; konektor WorkBuddy tersedia, sementara bukti penggunaan WorkBuddy nyata tetap merupakan kebutuhan submission eksternal. Lihat [bukti video lengkap](docs/COMPLETE_VIDEO.md), [matriks Challenge C](docs/CHALLENGE_C.md), dan [arsitektur saat ini](docs/CREATOR_ARCHITECTURE.md).
 
 | Atribut | Nilai |
 |---|---|
