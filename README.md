@@ -27,17 +27,18 @@ GEMINI_API_KEY=your-private-google-ai-studio-key
 GEMINI_MODEL=gemini-3.5-flash-lite
 TURSO_DATABASE_URL=libsql://your-database.turso.io
 TURSO_AUTH_TOKEN=your-private-turso-token
-TRENDFORGE_INVITE_CODE=a-long-random-invite-code
-TRENDFORGE_ADMIN_USERNAMES=your-username
+TRENDFORGE_ADMIN_USERNAMES=
 ```
 
 Credentials stay on the backend. Use an eligible Gemini free-tier project. Google determines eligibility, billing and quota; the program never switches to a different paid model. Free-tier source content may be used to improve Google's products: use public or fictional product facts. Model 2.5 Flash-Lite returned 404 for the tested new account; 3.5 Flash-Lite succeeded. [Google pricing](https://ai.google.dev/gemini-api/docs/pricing), [native generation API](https://ai.google.dev/api/generate-content).
+
+Registration is public and requires only a username and password. The obsolete `TRENDFORGE_INVITE_CODE` setting is ignored and can be removed. For a new installation, register the owner first, then add that existing username to `TRENDFORGE_ADMIN_USERNAMES` and restart/redeploy. Names in this list are reserved against public registration; existing accounts can still sign in.
 
 Turso is selected automatically when its URL/token are configured. A failed Turso connection never silently falls back to SQLite. Without those credentials, local SQLite is supported. Keys for the earlier YouTube/stock integrations remain compatible but are unnecessary for this source-only workflow.
 
 ## Create and review
 
-1. Register with your invite code, or sign in to your existing account. No default production password is created.
+1. Create an account with a username and password, or sign in to your existing account. Registration signs you in automatically. No default production password is created.
 2. Create a project and paste one verified fact per line. Choose at least two formats and your languages. Only attest halal evidence when you have checked a current certificate.
 3. Save the source, then select Create & review. Follow the three agents and inspect cited rejections, repairs and evidence.
 4. If the team escalates, clarify the source/angle or edit the draft and submit a new review. Invalid agent results, quota errors and timeouts never approve content.

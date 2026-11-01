@@ -16,24 +16,37 @@ def login(c, username, password=PASSWORD):
     return c.post("/api/v1/session", json={"username": username, "password": password})
 
 
-def test_registration_requires_the_shared_invite_code(client, monkeypatch):
+def test_public_registration_without_invite(client, monkeypatch):
     fresh = TestClient(client.app)
     assert fresh.get("/api/v1/session").json() == {"authenticated": False, "csrf_token": None, "user": None, "registration_open": True}
-    wrong = register(fresh, "new-creator", invite="not-the-code")
-    assert wrong.status_code == 403 and wrong.json()["error"]["code"] == "INVALID_INVITE_CODE"
     assert register(fresh, "x", invite=INVITE_CODE).json()["error"]["code"] == "INVALID_USERNAME"
     assert register(fresh, "new-creator", password="short").json()["error"]["code"] == "INVALID_PASSWORD_FORMAT"
-    created = register(fresh, "New-Creator")
+    created = fresh.post('/api/v1/auth/register',json={'username':'New-Creator','password':PASSWORD})
     assert created.status_code == 201
     assert created.json()["user"]["username"] == "new-creator"
     assert created.json()["user"]["display_name"] == "New-Creator"
     assert fresh.get("/api/v1/session").json()["user"]["username"] == "new-creator"
+    fresh.headers['X-CSRF-Token'] = created.json()['csrf_token']
+    assert fresh.delete('/api/v1/session').status_code == 204
+    assert login(fresh, 'New-Creator').status_code == 200
     # Usernames are unique regardless of letter case.
     assert register(TestClient(client.app), "NEW-creator").json()["error"]["code"] == "USERNAME_TAKEN"
     monkeypatch.setenv("TRENDFORGE_INVITE_CODE", "")
-    closed = register(TestClient(client.app), "late-creator")
-    assert closed.status_code == 403 and closed.json()["error"]["code"] == "REGISTRATION_CLOSED"
-    assert TestClient(client.app).get("/api/v1/session").json()["registration_open"] is False
+    opened = register(TestClient(client.app), "late-creator")
+    assert opened.status_code == 201
+    assert TestClient(client.app).get("/api/v1/session").json()["registration_open"] is True
+
+
+def test_public_registration_cannot_claim_admin_names_and_is_rate_limited(client,monkeypatch):
+    monkeypatch.setenv('TRENDFORGE_ADMIN_USERNAMES','tester,reserved-owner')
+    fresh=TestClient(client.app)
+    response=register(fresh,'RESERVED-OWNER')
+    assert response.status_code==409
+    assert client.app.state.db.user_by_username('reserved-owner') is None
+    for _ in range(9):
+        assert register(fresh,'xx',password='short').status_code==422
+    assert register(fresh,'ordinary-creator').status_code==429
+    assert login(fresh,'tester').status_code==200
 
 
 def test_sign_in_is_generic_rate_limited_and_never_stores_plain_passwords(client):

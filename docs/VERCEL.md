@@ -22,11 +22,12 @@ GEMINI_MODEL=gemini-3.5-flash-lite
 TRENDFORGE_WORKER=external
 TRENDFORGE_DATA_DIR=/tmp/trendforge
 TRENDFORGE_ALLOWED_HOSTS=your-project.vercel.app,your-custom-domain.example
-TRENDFORGE_INVITE_CODE=your-private-registration-invite
-TRENDFORGE_ADMIN_USERNAMES=your-username
+TRENDFORGE_ADMIN_USERNAMES=
 ```
 
 Use only your actual hostnames, without a scheme or path. System-provided VERCEL_URL / VERCEL_PROJECT_PRODUCTION_URL are also accepted. Unrelated Host headers remain blocked. Existing accounts stay in Turso. The temporary directory is only an instance cache/settings workspace, not persistent database or video storage. Keep shared service settings in environment variables.
+
+Account creation is public with a username and password; no invite code is required. An old `TRENDFORGE_INVITE_CODE` variable has no effect and can be deleted. For a fresh installation, register the owner first, then add their existing username to `TRENDFORGE_ADMIN_USERNAMES` and redeploy. Public registration cannot claim names reserved by this list. Existing accounts and passwords continue to work.
 
 The Vercel runtime automatically disables the embedded video worker. AI execution is attached to the ASGI response's BackgroundTasks instead of an unowned asyncio task. Its 80-second agent budget fits the configured 120-second function limit. This is bounded request execution, not a durable long-running job scheduler.
 

@@ -21,15 +21,16 @@ def main():
     DIRECTORY.mkdir(parents=True, exist_ok=True)
     os.environ.update(TRENDFORGE_AI_ENGINE="gemini", TRENDFORGE_DATABASE_BACKEND="sqlite",
         TRENDFORGE_STORAGE_BACKEND="local", TRENDFORGE_WORKER="external",
-        TRENDFORGE_INVITE_CODE="creator-local-test-invite", TRENDFORGE_ADMIN_USERNAMES="creator-tester")
+        TRENDFORGE_ADMIN_USERNAMES="")
     report = {"provider": "Gemini", "model": config.Settings().get("gemini_model"),
               "dataset": "Fictional synthetic source, not the official organizer dataset", "checks": []}
     with TestClient(create_app(DIRECTORY / "data")) as c:
         credentials = {"username": "creator-tester", "password": "CreatorLocalTest!2026"}
         r = c.post('/api/v1/session', json=credentials)
         if r.status_code != 200:
-            r = c.post('/api/v1/auth/register', json={**credentials, "invite_code": "creator-local-test-invite"})
+            r = c.post('/api/v1/auth/register', json=credentials)
         assert r.status_code in (200, 201), r.text
+        os.environ['TRENDFORGE_ADMIN_USERNAMES'] = 'creator-tester'
         c.headers['X-CSRF-Token'] = r.json()['csrf_token']
         p = c.post('/api/v1/projects', json={"niche": "Fictional Senja product launch", "audience": "First-time ginger drink customers",
             "goal": "Introduce a fictional product honestly", "platform": "both", "language": "id", "target_duration_seconds": 30}).json()

@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from trendforge.app import create_app
 from trendforge.config import ENV_FILE, Settings
 from trendforge.db import Database
+from trendforge import auth
 
 
 @pytest.fixture(autouse=True)
@@ -17,7 +18,7 @@ def isolate_service_configuration(monkeypatch):
         monkeypatch.delenv(name, raising=False)
     for name in ("TURSO_DATABASE_URL", "TURSO_AUTH_TOKEN", "TRENDFORGE_DATABASE_BACKEND"):
         monkeypatch.delenv(name, raising=False)
-    # Test-only accounts: a shared invite code and one admin username.
+    # Keep an obsolete invite setting present to verify it no longer gates registration.
     monkeypatch.setenv("TRENDFORGE_INVITE_CODE", INVITE_CODE)
     monkeypatch.setenv("TRENDFORGE_ADMIN_USERNAMES", "tester")
     # Local storage and the embedded worker, polling quickly so tests stay fast.
@@ -33,8 +34,15 @@ PASSWORD = "test-only-password"
 
 def sign_up(c, username="tester", password=PASSWORD):
     """Register an account on client `c` and keep its CSRF token."""
-    response = c.post("/api/v1/auth/register", json={"username": username, "password": password, "invite_code": INVITE_CODE})
-    assert response.status_code == 201, response.text
+    if auth.is_admin(auth.normalize_username(username)):
+        # Trusted fixture setup provisions the workspace owner; public users cannot claim reserved admin names.
+        digest,salt=auth.hash_password(password)
+        c.app.state.db.create_user(auth.normalize_username(username),username,digest,salt)
+        response=c.post('/api/v1/session',json={'username':username,'password':password})
+        assert response.status_code==200,response.text
+    else:
+        response = c.post("/api/v1/auth/register", json={"username": username, "password": password})
+        assert response.status_code == 201, response.text
     c.headers["X-CSRF-Token"] = response.json()["csrf_token"]
     return response.json()["user"]
 

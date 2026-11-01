@@ -52,11 +52,6 @@ def new_connector_token():
     return TOKEN_PREFIX + secrets.token_urlsafe(32)
 
 
-def invite_code():
-    """Shared registration code from the environment. Empty means registration is closed."""
-    return os.environ.get("TRENDFORGE_INVITE_CODE", "").strip()
-
-
 def is_admin(username):
     """Workspace admins manage shared settings (speech model, legacy provider keys)."""
     admins = {x.strip().lower() for x in os.environ.get("TRENDFORGE_ADMIN_USERNAMES", "").split(",") if x.strip()}

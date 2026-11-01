@@ -63,7 +63,7 @@ The live OpenAPI schema is available at `/openapi.json`, and interactive API doc
 
 | Group | Main routes |
 |---|---|
-| Accounts | `GET/POST/DELETE /api/v1/session` (username + password), `POST /api/v1/auth/register` (invite code), `POST /api/v1/auth/password`, `GET/POST /api/v1/tokens`, `DELETE /api/v1/tokens/{id}` |
+| Accounts | `GET/POST/DELETE /api/v1/session` (username + password), `POST /api/v1/auth/register` (public username + password registration), `POST /api/v1/auth/password`, `GET/POST /api/v1/tokens`, `DELETE /api/v1/tokens/{id}` |
 | Connections | `GET/PATCH /api/v1/settings`, test, connector configuration, speech-model download |
 | Projects | `GET/POST /api/v1/projects`, `GET/PATCH/DELETE /api/v1/projects/{id}` |
 | Research/writing | research runs, agent requests/context/schema/cancel/result, optional AI adapter, manual brief revisions, operator approval |

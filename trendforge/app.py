@@ -359,7 +359,7 @@ def create_app(directory=None):
 
     SESSION_SECONDS = 86400
     LOGIN_LIMIT, LOGIN_WINDOW = 5, 15 * 60          # Failed sign-ins per username.
-    REGISTER_LIMIT, REGISTER_WINDOW = 10, 15 * 60   # Wrong invite codes, workspace-wide.
+    REGISTER_LIMIT, REGISTER_WINDOW = 10, 15 * 60   # Registration attempts per connection address.
 
     def create_session(request, response, user):
         token, csrf = secrets.token_urlsafe(40), secrets.token_urlsafe(24)
@@ -391,21 +391,18 @@ def create_app(directory=None):
         signed_in = request.state.actor == "operator"
         return {"authenticated": signed_in, "csrf_token": request.state.csrf,
                 "user": account(request.state.user) if signed_in else None,
-                "registration_open": bool(auth.invite_code())}
+                "registration_open": True}
 
     @app.post("/api/v1/auth/register", status_code=201)
     def register(request: Request, response: Response, body: dict = Body(...)):
         throttle()
-        code = auth.invite_code()
-        if not code:
-            raise AppError("Registration is closed. Ask the workspace owner for access.", "REGISTRATION_CLOSED", 403)
-        if db().recent_failures("register", REGISTER_WINDOW) >= REGISTER_LIMIT:
+        scope = 'register:' + auth.token_hash(request.client.host if request.client else 'unknown')
+        if db().recent_failures(scope, REGISTER_WINDOW) >= REGISTER_LIMIT:
             raise AppError("Too many attempts. Try again in 15 minutes.", "RATE_LIMIT", 429)
-        given = body.get("invite_code")
-        if not isinstance(given, str) or not hmac.compare_digest(given.strip().encode(), code.encode()):
-            db().record_failure("register")
-            raise AppError("The invite code is incorrect.", "INVALID_INVITE_CODE", 403)
+        db().record_failure(scope)
         username = auth.normalize_username(body.get("username"))
+        if auth.is_admin(username):
+            raise AppError('This username is unavailable. Choose another username.', 'USERNAME_UNAVAILABLE', 409)
         password = auth.validate_password(body.get("password"))
         digest, salt = auth.hash_password(password)
         user = db().create_user(username, body.get("username").strip(), digest, salt)
