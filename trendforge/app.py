@@ -197,6 +197,12 @@ def create_app(directory=None):
                 scoped = re.match(r"^/api/v1/projects/([^/]+)", path)
                 if scoped and request.state.user and db.project_owner(scoped.group(1)) != request.state.user["id"]:
                     raise AppError("This project was not found.", "NOT_FOUND", 404)
+                media_path = re.match(r'^/api/v1/projects/([^/]+)/(?:uploads|plans|prepare-jobs|edited-video-jobs|transcription-jobs|subtitles|export-jobs|exports|ready-confirmation)(?:/|$)', path)
+                if media_path:
+                    from .creator import video_content
+                    video_content(db, media_path.group(1))
+                    if db.project(media_path.group(1)).get('creator_source_id') and request.state.actor == 'connector' and ('/exports/' in path or '/export-jobs' in path):
+                        raise AppError('The creator releases videos from the website.', 'HUMAN_APPROVAL_REQUIRED', 403)
                 if request.method not in {"GET", "HEAD", "OPTIONS"} and request.state.actor == "operator":
                     if not hmac.compare_digest(request.headers.get("x-csrf-token", ""), request.state.csrf or ""):
                         raise AppError("Your session needs a refresh. Reload the page and try again.", "CSRF_REJECTED", 403)
@@ -801,6 +807,36 @@ def create_app(directory=None):
     @app.post("/api/v1/projects/{pid}/briefs", status_code=201)
     def brief_post(pid: str, body: BriefInput):
         return save_brief(pid, body)
+
+    @app.post('/api/v1/projects/{pid}/creator/video-brief', status_code=201)
+    def creator_video_brief(pid: str, request: Request, body: dict = Body(...)):
+        operator(request)
+        from .creator import current, guard
+        with db().lock:
+            p, source, run = current(db(), pid)
+            db().assert_editable(pid, body.get('expected_project_revision'))
+            if not run or run['status'] != 'approved' or not run['review_passed'] or run['revision'] != body.get('run_revision') or guard(run['draft'], source):
+                raise AppError('Approve the exact current content revision first.', 'APPROVAL_REQUIRED', 409)
+            if body.get('confirmation') is not True or body.get('duration') not in (30, 45, 60):
+                raise AppError('Confirm the script and choose a 30, 45 or 60 second video.')
+            content = next((c for c in run['draft']['contents'] if c['format']=='short_script' and c['language']==body.get('language')), None)
+            if not content:
+                raise AppError('Generate and approve a short-video script in the selected language first.', 'SCRIPT_REQUIRED', 409)
+            if p.get('video_creator_run_id') == run['id'] and p.get('video_language') == body['language'] and p['target_duration_seconds'] == body['duration'] and p.get('brief_id'):
+                return public(db().doc(pid, p['brief_id'], 'brief'))
+            text = '\n'.join(line['text'] for line in content['lines'])
+            if not 10 <= len(text) <= 8000:
+                raise AppError('The reviewed video script must contain 10–8000 characters. Edit and review it again.')
+            brief = db().add_doc(pid, 'brief', {'title': p['niche'], 'hook': content['lines'][0]['text'],
+                'angle': run.get('plan', {}).get('angle', p['goal']) if run.get('plan') else p['goal'],
+                'script': text, 'cta': content['lines'][-1]['text'], 'shots': [
+                    {'visual': f'Creator-owned clip {i+1}', 'narration': text if i==0 else '', 'duration_seconds':body['duration']/3} for i in range(3)],
+                'source_video_ids':[], 'creator_run_id':run['id'], 'creator_source_id':source['id'],
+                'status':'approved', 'approved_at':now(), 'approved_by':request.state.user['id']})
+            db().update_project(pid, {**invalidation('brief'), 'brief_id':brief['id'], 'video_creator_run_id':run['id'],
+                'video_language':body['language'], 'target_duration_seconds':body['duration'], 'phase':'BRIEF_APPROVED'}, p['revision'])
+            db().event(pid,'reviewed_script_selected_for_video',{'run_id':run['id'],'brief_id':brief['id']})
+            return public(brief)
 
     @app.get("/api/v1/projects/{pid}/briefs/{did}")
     def brief_get(pid: str, did: str):
