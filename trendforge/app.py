@@ -117,13 +117,18 @@ def create_app(directory=None):
         if settings.get("speech_model") not in {"tiny", "base", "small"}:
             raise RuntimeError("TRENDFORGE_SPEECH_MODEL must be tiny, base or small.")
         db = Database(directory / "trendforge.sqlite3")
+        if os.environ.get('VERCEL') and db.backend != 'turso':
+            raise RuntimeError('Set TURSO_DATABASE_URL and TURSO_AUTH_TOKEN on Vercel. Local SQLite is not persistent there.')
         storage = create_storage(directory)
         app.state.settings, app.state.db, app.state.storage = settings, db, storage
         app.state.creator_tasks = set()
         app.state.worker = None
-        if os.environ.get("TRENDFORGE_WORKER", "embedded").strip() != "external":
+        if not os.environ.get('VERCEL') and os.environ.get("TRENDFORGE_WORKER", "embedded").strip() != "external":
             # Local use: the video worker runs inside this process (the only worker).
-            from .worker import WorkerRuntime
+            try:
+                from .worker import WorkerRuntime
+            except ModuleNotFoundError as exc:
+                raise RuntimeError('Install video dependencies with uv sync --extra video, or use TRENDFORGE_WORKER=external for the web-only service.') from exc
             app.state.worker = WorkerRuntime(db, settings, storage, directory).start(sole_worker=True)
         app.state.login_attempts = deque()
         app.state.research_lock = asyncio.Lock()
@@ -224,7 +229,10 @@ def create_app(directory=None):
             response.headers["Cache-Control"] = "no-store"
         return response
 
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+    hosts = ['127.0.0.1', 'localhost', 'testserver']
+    hosts += [h.strip() for h in os.environ.get('TRENDFORGE_ALLOWED_HOSTS', '').split(',') if h.strip()]
+    hosts += [os.environ[k] for k in ('VERCEL_URL','VERCEL_PROJECT_PRODUCTION_URL') if os.environ.get(k)]
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=hosts)
 
     from .creator import router as creator_router
     app.include_router(creator_router)
@@ -339,6 +347,8 @@ def create_app(directory=None):
             return public(plan)
 
     def launch(pid, kind, snapshot, request):
+        if os.environ.get('VERCEL') and not db().workers_online():
+            raise AppError('The external video worker is offline. Start it with the same Turso and object-storage settings.', 'WORKER_OFFLINE', 503)
         key = request.headers.get("idempotency-key")
         if not key or len(key) > 180:
             raise AppError("A unique request key is required to start processing.", "IDEMPOTENCY_KEY_REQUIRED")
@@ -857,6 +867,10 @@ def create_app(directory=None):
     UPLOAD_PURPOSES = {"clip": "uploads", "finished_edit": "edited"}
 
     def check_upload_allowed(pid, purpose, current=None):
+        if os.environ.get('VERCEL') and storage().backend == 'local':
+            raise AppError('Configure shared object storage for direct uploads on Vercel. Local video storage is only supported on a persistent server.', 'SHARED_STORAGE_REQUIRED', 409)
+        if os.environ.get('VERCEL') and not db().workers_online():
+            raise AppError('The external video worker is offline. Start it before uploading footage.', 'WORKER_OFFLINE', 503)
         p = db().assert_editable(pid)
         if not p.get("brief_id") or db().doc(pid, p["brief_id"], "brief")["status"] != "approved":
             raise AppError("Approve your brief before uploading footage.", "APPROVAL_REQUIRED", 409)

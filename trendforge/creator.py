@@ -7,6 +7,7 @@ not a claim that this application provides a legal certification service.
 import asyncio
 import io
 import json
+import os
 import re
 import time
 import zipfile
@@ -15,7 +16,7 @@ from html import escape
 from typing import Literal
 from xml.etree import ElementTree
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, BackgroundTasks, Body, Request
 from fastapi.responses import Response
 from pydantic import Field, ValidationError, model_validator
 
@@ -313,7 +314,7 @@ async def execute(app, pid, rid):
             change(db, run, status="escalated", stage="Human", message=message, review_passed=False, finished_at=now())
 
 
-def begin(request, pid, key, edited=None):
+def begin(request, pid, key, edited=None, background_tasks=None):
     db = request.app.state.db
     with db.lock:
         p, source, prior = current(db, pid)
@@ -342,6 +343,9 @@ def begin(request, pid, key, edited=None):
         db.update_project(pid, {**reset_video(p), "creator_run_id": run["id"]}, p["revision"])
         db.event(pid, "creator_run_started", {"run_id": run["id"], "source_id": source["id"]})
     if run["engine"] != "workbuddy":
+        if os.environ.get('VERCEL') and background_tasks is not None:
+            background_tasks.add_task(execute, request.app, pid, run['id'])
+            return run
         tasks = getattr(request.app.state, "creator_tasks", set())
         request.app.state.creator_tasks = tasks
         task = asyncio.create_task(execute(request.app, pid, run["id"]))
@@ -398,12 +402,12 @@ def save_source(pid: str, request: Request, body: Source):
 
 
 @router.post("/projects/{pid}/creator/runs", status_code=202)
-async def start_run(pid: str, request: Request):
+async def start_run(pid: str, request: Request, background_tasks: BackgroundTasks):
     operator(request)
     key = request.headers.get("idempotency-key", "")
     if not 1 <= len(key) <= 180:
         raise AppError("A unique request key is required.", "IDEMPOTENCY_KEY_REQUIRED")
-    return begin(request, pid, key)
+    return begin(request, pid, key, background_tasks=background_tasks)
 
 
 @router.post("/projects/{pid}/creator/runs/{rid}/cancel")
@@ -463,7 +467,7 @@ def approve(pid: str, rid: str, request: Request, body: dict = Body(...)):
 
 
 @router.post("/projects/{pid}/creator/runs/{rid}/edit", status_code=202)
-async def edit(pid: str, rid: str, request: Request, body: Draft):
+async def edit(pid: str, rid: str, request: Request, body: Draft, background_tasks: BackgroundTasks):
     operator(request)
     db = request.app.state.db
     p, source, run = current(db, pid)
@@ -479,7 +483,7 @@ async def edit(pid: str, rid: str, request: Request, body: Draft):
         raise AppError("Make a change before submitting a new review.")
     proposed = db.add_doc(pid, "rule_proposal", {"status": "proposed", "text": "Prefer the creator's phrasing in these before/after examples, without changing source facts or mandatory rules. " + json.dumps({"before": before[:600], "after": after[:600]}, ensure_ascii=False),
         "before": run.get("draft"), "after": body.model_dump(), "from_run": rid})
-    result = begin(request, pid, new_id("edit"), body.model_dump())
+    result = begin(request, pid, new_id("edit"), body.model_dump(), background_tasks=background_tasks)
     return {**result, "rule_proposal_id": proposed["id"]}
 
 

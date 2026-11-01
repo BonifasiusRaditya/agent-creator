@@ -1,0 +1,9 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "trendforge/app.py": {
+      "maxDuration": 120,
+      "excludeFiles": "{.data/**,.cache/**,.venv/**,test-results/**,tests/**,docs/**,outputs/**,**/node_modules/**,**/__pycache__/**}"
+    }
+  }
+}

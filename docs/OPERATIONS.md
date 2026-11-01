@@ -29,8 +29,8 @@ Run a separate worker:
 ```powershell
 # On the same machine (shares .env):
 $env:TRENDFORGE_WORKER = "external"   # for the website process, so it does not start its own worker
-uv run trendforge                       # terminal 1
-uv run python -m trendforge.worker      # terminal 2
+uv run --extra video trendforge                       # terminal 1
+uv run --extra video python -m trendforge.worker      # terminal 2
 ```
 
 ```bash
@@ -56,13 +56,13 @@ speech model is downloaded once per worker (Connections → Download model, as a
 4. Recommended: enable **versioning** (deleted or overwritten objects can be recovered) and a lifecycle
    rule that removes non-current versions after 30 days.
 5. Move existing local videos: stop the website, set `TRENDFORGE_STORAGE_BACKEND=cos`, then
-   `uv run python -m scripts.migrate_storage` (preview) and `--apply`.
+   `uv run --extra video python -m scripts.migrate_storage` (preview) and `--apply`.
 
 ## Backup
 
 ```powershell
-uv run python -m scripts.backup                       # into the configured storage, under backups/
-uv run python -m scripts.backup --to-dir D:/tf-backup # into a folder on another disk
+uv run --extra video python -m scripts.backup                       # into the configured storage, under backups/
+uv run --extra video python -m scripts.backup --to-dir D:/tf-backup # into a folder on another disk
 ```
 
 A snapshot contains every database row except sessions and sign-in counters (everyone signs in again
@@ -87,7 +87,7 @@ overwrite live data.
 
 1. Stop the website and worker.
 2. Create a new Turso database (and, for a full disaster, a new bucket) and point `.env` at them.
-3. `uv run python -m scripts.restore --list` then `uv run python -m scripts.restore --snapshot latest`
+3. `uv run --extra video python -m scripts.restore --list` then `uv run --extra video python -m scripts.restore --snapshot latest`
    (add `--from-dir D:/tf-backup` when the backup is in a folder).
 4. The restore copies files first, then rows, checks row counts against the manifest, confirms every
    referenced file exists and compares SHA-256 checksums of clips, finished edits and exports.

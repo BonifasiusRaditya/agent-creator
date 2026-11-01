@@ -1,0 +1,11 @@
+.data
+.cache
+.venv
+test-results
+outputs
+docs
+tests
+**/node_modules
+**/__pycache__
+.env
+.env.*

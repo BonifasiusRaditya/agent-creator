@@ -2,6 +2,7 @@ import json
 import os
 import secrets
 import threading
+import tempfile
 from pathlib import Path
 
 from cryptography.fernet import Fernet
@@ -18,7 +19,7 @@ def load_environment(path=ENV_FILE):
 
 
 load_environment()
-DATA = Path(os.environ.get("TRENDFORGE_DATA_DIR", ROOT / ".data")).resolve()
+DATA = Path(os.environ.get("TRENDFORGE_DATA_DIR", Path(tempfile.gettempdir()) / "trendforge" if os.environ.get('VERCEL') else ROOT / ".data")).resolve()
 STATIC = Path(__file__).resolve().parent / "static"
 
 

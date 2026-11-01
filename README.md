@@ -9,13 +9,15 @@ The English interface uses a black and orange theme. The workflow researches You
 Python 3.12/3.13 and uv:
 
 ```powershell
-uv sync --python 3.12 --group dev
-uv run trendforge
+uv sync --python 3.12 --extra video --group dev
+uv run --extra video trendforge
 ```
 
 Open http://127.0.0.1:8765. Keep one server per data folder. Restart an existing server yourself after updating the code and .env.
 
 ## Configure once
+
+For Vercel deployment, follow [VERCEL.md](docs/VERCEL.md). The default dependency set is web-only; local rendering and external workers require the `video` extra. A successful web build does not replace the external video worker or shared file storage.
 
 Copy `.env.example` to `.env` only for a new installation. Preserve an existing .env.
 
@@ -53,7 +55,7 @@ Turso is selected automatically when its URL/token are configured. A failed Turs
 
 Content/source changes invalidate the linked video brief and downstream release. Processing, export and download enforce the current approved script, including evidence validity. Existing uploaded assets remain reusable; previous files cannot be released against an unapproved replacement source.
 
-For a single local server set `TRENDFORGE_WORKER=embedded` (default). A configured external worker must be started separately with `uv run python -m trendforge.worker` using the same database/storage. The speech model downloads once and is cached; it needs no API key. The video uses the creator's actual clips and audio; optional generative video and TTS services are not required.
+For a single local server set `TRENDFORGE_WORKER=embedded` (default). A configured external worker must be started separately with `uv run --extra video python -m trendforge.worker` using the same database/storage. The speech model downloads once and is cached; it needs no API key. The video uses the creator's actual clips and audio; optional generative video and TTS services are not required.
 
 See [complete video acceptance evidence](docs/COMPLETE_VIDEO.md), including an actual browser-uploaded speech/ASR/export run and its limits.
 
@@ -66,8 +68,8 @@ Read [the workflow skill](workbuddy/skills/trendforge/SKILL.md), [architecture a
 ## Verification
 
 ```powershell
-uv run pytest -q
-uv run python -m scripts.check_creator_live
+uv run --extra video pytest -q
+uv run --extra video python -m scripts.check_creator_live
 ```
 
 The second command intentionally calls Gemini with fictional data on an isolated SQLite database and saves real provider evidence under `test-results/creator-live`. It does not change application accounts or projects. It creates a local test account `creator-tester` / `CreatorLocalTest!2026` only in that test database. Standard tests simulate model responses; Turso destructive tests require a separate test database and refuse the production URL.

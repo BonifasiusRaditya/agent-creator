@@ -1128,19 +1128,23 @@ name = "trendforge"
 version = "1.0.0"
 source = { editable = "." }
 dependencies = [
-    { name = "av" },
     { name = "boto3" },
     { name = "cryptography" },
     { name = "fastapi" },
-    { name = "faster-whisper" },
     { name = "httpx" },
-    { name = "imageio-ffmpeg" },
     { name = "libsql" },
     { name = "mcp" },
     { name = "pydantic" },
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "uvicorn" },
+]
+
+[package.optional-dependencies]
+video = [
+    { name = "av" },
+    { name = "faster-whisper" },
+    { name = "imageio-ffmpeg" },
 ]
 
 [package.dev-dependencies]
@@ -1151,13 +1155,13 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "av", specifier = ">=14,<17" },
+    { name = "av", marker = "extra == 'video'", specifier = ">=14,<17" },
     { name = "boto3", specifier = ">=1.35,<2" },
     { name = "cryptography", specifier = ">=44,<47" },
     { name = "fastapi", specifier = ">=0.115,<1" },
-    { name = "faster-whisper", specifier = ">=1.1,<2" },
+    { name = "faster-whisper", marker = "extra == 'video'", specifier = ">=1.1,<2" },
     { name = "httpx", specifier = ">=0.28,<1" },
-    { name = "imageio-ffmpeg", specifier = ">=0.6,<1" },
+    { name = "imageio-ffmpeg", marker = "extra == 'video'", specifier = ">=0.6,<1" },
     { name = "libsql", specifier = ">=0.1.11,<0.2" },
     { name = "mcp", specifier = ">=1.12,<2" },
     { name = "pydantic", specifier = ">=2.10,<3" },
@@ -1165,6 +1169,7 @@ requires-dist = [
     { name = "python-multipart", specifier = ">=0.0.20,<1" },
     { name = "uvicorn", specifier = ">=0.34,<1" },
 ]
+provides-extras = ["video"]
 
 [package.metadata.requires-dev]
 dev = [
