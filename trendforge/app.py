@@ -110,8 +110,8 @@ def create_app(directory=None):
     async def lifespan(app):
         directory.mkdir(parents=True, exist_ok=True)
         settings = Settings(directory)
-        if settings.get("ai_engine") not in {"workbuddy", "openai_compatible"}:
-            raise RuntimeError("TRENDFORGE_AI_ENGINE must be workbuddy or openai_compatible.")
+        if settings.get("ai_engine") not in {"workbuddy", "openai_compatible", "gemini"}:
+            raise RuntimeError("TRENDFORGE_AI_ENGINE must be workbuddy, gemini or openai_compatible.")
         if settings.get("stock_provider") not in {"pixabay", "pexels"}:
             raise RuntimeError("TRENDFORGE_STOCK_PROVIDER must be pixabay or pexels.")
         if settings.get("speech_model") not in {"tiny", "base", "small"}:
@@ -119,6 +119,7 @@ def create_app(directory=None):
         db = Database(directory / "trendforge.sqlite3")
         storage = create_storage(directory)
         app.state.settings, app.state.db, app.state.storage = settings, db, storage
+        app.state.creator_tasks = set()
         app.state.worker = None
         if os.environ.get("TRENDFORGE_WORKER", "embedded").strip() != "external":
             # Local use: the video worker runs inside this process (the only worker).
@@ -140,6 +141,11 @@ def create_app(directory=None):
         try:
             yield
         finally:
+            creator_tasks = list(app.state.creator_tasks)
+            for task in creator_tasks:
+                task.cancel()
+            if creator_tasks:
+                await asyncio.gather(*creator_tasks, return_exceptions=True)
             cleanup_task.cancel()
             with suppress(asyncio.CancelledError):
                 await cleanup_task
@@ -213,6 +219,9 @@ def create_app(directory=None):
         return response
 
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=["127.0.0.1", "localhost", "testserver"])
+
+    from .creator import router as creator_router
+    app.include_router(creator_router)
 
     def db():
         return app.state.db

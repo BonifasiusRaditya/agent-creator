@@ -23,31 +23,49 @@ def validate_base_url(url):
     return url.rstrip("/")
 
 
-async def provider_json(settings, system, context):
-    if settings.get("ai_engine") != "openai_compatible":
+async def provider_json(settings, system, context, *, timeout=120):
+    gemini = settings.get("ai_engine") == "gemini"
+    if settings.get("ai_engine") not in {"openai_compatible", "gemini"}:
         raise AppError("AI writing runs in WorkBuddy. Use the TrendForge connector to complete your writing request.", "WORKBUDDY_REQUIRED", 409)
-    base = settings.get("ai_base_url")
-    model = settings.get("ai_model")
+    base = "https://generativelanguage.googleapis.com/v1beta" if gemini else settings.get("ai_base_url")
+    model = (settings.get("gemini_model") or "gemini-3.5-flash-lite") if gemini else settings.get("ai_model")
+    key = settings.get("gemini_api_key") if gemini else settings.get("ai_api_key")
+    if gemini and not key:
+        raise AppError("The workspace owner needs to add GEMINI_API_KEY to .env and restart the service.", "AI_NOT_CONFIGURED", 409)
     if not base or not model:
         raise AppError("Connect an AI provider in Connections, or create your brief with WorkBuddy.", "AI_NOT_CONFIGURED", 409)
     validate_base_url(base)
     headers = {"Content-Type": "application/json"}
-    if settings.get("ai_api_key"):
-        headers["Authorization"] = f"Bearer {settings.get('ai_api_key')}"
+    if gemini:
+        headers["x-goog-api-key"] = key
+    elif key:
+        headers["Authorization"] = f"Bearer {key}"
     body = {"model": model, "messages": [
         {"role": "system", "content": system + " Return a single JSON object. No markdown or commentary."},
         {"role": "user", "content": json.dumps(context, ensure_ascii=False)}],
         "response_format": {"type": "json_object"}}
+    if gemini:
+        if not re.fullmatch(r"gemini-[a-z0-9.-]+", model):
+            raise AppError("Choose a valid Gemini model ID.", "AI_MODEL_INVALID", 409)
+        body = {"systemInstruction": {"parts": [{"text": system + " Return a single JSON object."}]},
+                "contents": [{"role": "user", "parts": [{"text": json.dumps(context, ensure_ascii=False)}]}],
+                "generationConfig": {"responseMimeType": "application/json", "maxOutputTokens": 8192}}
+    endpoint = base + (f"/models/{model}:generateContent" if gemini else "/chat/completions")
     try:
-        async with httpx.AsyncClient(timeout=httpx.Timeout(120, connect=15)) as client:
-            response = await client.post(base + "/chat/completions", headers=headers, json=body)
-            if response.status_code in (400, 422):
+        async with httpx.AsyncClient(timeout=httpx.Timeout(timeout, connect=min(15, timeout))) as client:
+            response = await client.post(endpoint, headers=headers, json=body)
+            if not gemini and response.status_code in (400, 422):
                 body.pop("response_format", None)
-                response = await client.post(base + "/chat/completions", headers=headers, json=body)
+                response = await client.post(endpoint, headers=headers, json=body)
             if response.status_code >= 400:
+                if response.status_code == 429:
+                    raise AppError("The AI quota is currently used up. Your work is saved; try again later. No paid fallback was used.", "AI_QUOTA", 429)
                 raise AppError(f"The AI provider returned {response.status_code}. Check your model, base URL, and API key.", "AI_PROVIDER_ERROR", 502)
             envelope = response.json()
-            content = envelope["choices"][0]["message"]["content"]
+            if gemini:
+                content = ''.join(p.get('text', '') for p in envelope['candidates'][0]['content']['parts'] if not p.get('thought'))
+            else:
+                content = envelope["choices"][0]["message"]["content"]
             if isinstance(content, list):
                 content = "".join(p.get("text", "") for p in content if isinstance(p, dict))
             content = re.sub(r"^```(?:json)?\s*|\s*```$", "", content.strip())

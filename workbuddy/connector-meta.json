@@ -2,16 +2,19 @@
   "name": "trendforge",
   "name_en": "TrendForge",
   "name_zh": "TrendForge",
-  "description": "Research, plan and produce short-form videos with a connected local creator workspace.",
-  "description_en": "Research, write and produce short videos in your local TrendForge workspace.",
-  "description_zh": "在本地 TrendForge 工作区研究、编写和制作短视频。",
+  "description": "Source-grounded Planner, Writer and Reviewer with human approval.",
+  "description_en": "Create multilingual content, review every claim and retain the full audit.",
+  "description_zh": "基于来源事实生成多语言内容，逐条审核并保留人工批准。",
   "source": "trendforge-creator",
   "type": "mcp",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "minWorkbuddyVersion": "4.24.0",
-  "examples_en": ["Complete my pending TrendForge writing request.", "Help me create a 30-second study tips video.", "Check the status of my video export."],
-  "examples_zh": ["帮我制作一个30秒的学习技巧短视频。", "查看我的视频导出状态。"],
+  "examples_en": [
+    "Review my TrendForge creator run using Planner, Writer and Reviewer."
+  ],
+  "examples_zh": [
+    "使用规划、写作和审核角色完成我的内容工作流。"
+  ],
   "author": "TrendForge",
   "icon": "icon.svg"
 }
-

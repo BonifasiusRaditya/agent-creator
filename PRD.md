@@ -2,14 +2,16 @@
 
 **Challenge C: The Creator Agent — Tencent Cloud Hackathon Indonesia 2026**
 
+> **Amendemen implementasi — 1 November 2026:** cakupan aktif mengikuti [matriks Challenge C](docs/CHALLENGE_C.md) dan [arsitektur saat ini](docs/CREATOR_ARCHITECTURE.md): sumber fakta produk → Planner → Writer → Reviewer → revisi maksimal tiga putaran → persetujuan manusia → ekspor konten dan cover. Antarmuka berbahasa Inggris dengan tema hitam/oranye. Gemini API menjadi engine yang disetujui untuk penggunaan langsung; konektor WorkBuddy tetap tersedia, sementara bukti penggunaan WorkBuddy nyata masih diperlukan untuk submission. Bagian riset YouTube, unggahan/edit video dan subtitle di bawah adalah rencana historis, bukan alur produk aktif. Kriteria penerimaan dan bukti terkini ada di [hasil pengujian](docs/CREATOR_TEST_RESULTS.md).
+
 | Atribut | Nilai |
 |---|---|
-| Versi | 1.0 |
-| Tanggal | 27 Oktober 2026 |
-| Status | Draft lengkap untuk pelaksanaan MVP; belum merupakan bukti implementasi atau hasil uji |
+| Versi | 1.1 — amendemen cakupan Challenge C |
+| Tanggal | 1 November 2026 |
+| Status | Alur inti diimplementasikan dan diuji; bukti submission eksternal ditandai terpisah |
 | Pemilik produk | Project Lead TrendForge AI; nama penanggung jawab diisi tim |
 | Mode PRD | Full — Why & Who → What & If → How & Next |
-| Bahasa produk | Bahasa Indonesia |
+| Bahasa produk | Antarmuka Inggris; konten Bahasa Indonesia, Inggris, Mandarin |
 | Periode MVP | 27 Oktober–1 November 2026, enam hari kalender |
 | Deadline keras | **1 November 2026, 23:59 WIB (UTC+07:00)** |
 | Target internal submit | 1 November 2026, 20:00 WIB; sisa waktu untuk kendala pengumpulan |
