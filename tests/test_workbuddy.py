@@ -1,4 +1,6 @@
-from conftest import project
+from datetime import datetime, timedelta, timezone
+
+from conftest import another_user, project
 
 
 def ideas_result():
@@ -20,6 +22,32 @@ def connector_headers(c):
         assert response.status_code == 201, response.text
         c.connector_token = response.json()["token"]
     return {"Authorization": "Bearer " + c.connector_token}
+
+
+def test_connection_status_requires_recent_unrevoked_activity_for_this_owner(client):
+    def connection(c=client):
+        return c.get('/api/v1/creator/status').json()['workbuddy_connection']
+
+    assert connection()['state'] == 'not_connected'
+    headers = connector_headers(client)  # Creating/configuring a token is not a connection.
+    assert connection()['state'] == 'not_connected'
+    assert client.get('/api/v1/creator/status', headers={'Authorization': 'Bearer invalid'}).status_code == 401
+    assert connection()['last_seen_at'] is None
+    verified = client.get('/api/v1/creator/status', headers=headers).json()['workbuddy_connection']
+    assert verified['state'] == 'connected' and verified['last_seen_at']
+    # Persisted token activity remains available even after the in-memory tracker is lost.
+    client.app.state.workbuddy_last_seen.clear()
+    assert connection()['state'] == 'connected'
+    other = another_user(client, 'separate-creator')
+    assert connection(other)['state'] == 'not_connected'
+    token_id = client.get('/api/v1/tokens').json()[0]['id']
+    old = (datetime.now(timezone.utc) - timedelta(minutes=11)).isoformat()
+    with client.app.state.db.connect() as c:
+        c.execute('UPDATE api_tokens SET last_used_at=? WHERE id=?', (old, token_id))
+    assert connection()['state'] == 'inactive'
+    assert client.get('/api/v1/creator/status', headers=headers).json()['workbuddy_connection']['state'] == 'connected'
+    assert client.delete('/api/v1/tokens/' + token_id).status_code == 204
+    assert connection()['state'] == 'not_connected'
 
 
 def test_workbuddy_request_to_review_without_another_ai_provider(client):

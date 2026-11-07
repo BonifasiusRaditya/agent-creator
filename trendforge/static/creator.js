@@ -18,14 +18,43 @@ async function api(path,options={}){
 }
 function notify(text,error=false){const el=document.createElement('div');el.className='toast'+(error?' error':'');el.role=error?'alert':'status';el.textContent=text;document.querySelector('#toasts').append(el);setTimeout(()=>el.remove(),6500);}
 async function work(fn){if(state.busy)return;state.busy=true;document.body.dataset.busy='true';try{await fn();}catch(e){notify(e.message,true);}finally{state.busy=false;delete document.body.dataset.busy;}}
+function connectionPanel(){
+  const c=state.status.workbuddy_connection||{state:'unknown'},seen=c.last_seen_at?new Date(c.last_seen_at).toLocaleString():'';
+  const copy={
+    connected:['WorkBuddy connected recently','Your connector reached TrendForge within the last 10 minutes.'],
+    not_connected:['WorkBuddy not connected','No verified connector activity for your account. Install your package from Connections, then ask WorkBuddy to run trendforge_health.'],
+    inactive:['WorkBuddy connection needs a check','No connector activity recorded in the last 10 minutes. Ask WorkBuddy to run trendforge_health, then refresh this status.'],
+    not_selected:['WorkBuddy not selected','This workspace is using an alternative writing provider.'],
+    unknown:['WorkBuddy status unavailable','We could not check the connector. Refresh the status to try again.']
+  }[c.state]||['WorkBuddy status unavailable','Refresh the status to try again.'];
+  return `<div class="creator-connection" data-state="${esc(c.state)}"><div><strong><span class="creator-connection-dot" aria-hidden="true"></span>${copy[0]}</strong><p>${copy[1]}${seen?` <span>Last recorded contact: ${esc(seen)}.</span>`:''}${c.state==='connected'?' This checks recent activity, not a continuous connection.':''}</p></div><div class="creator-actions"><a href="/connections" data-nav>Connection setup</a>${button('refresh-connection','Refresh status')}</div></div>`;
+}
+async function refreshConnection(){
+  try{state.status=await api('/creator/status');}
+  catch(e){state.status={...state.status,workbuddy_connection:{state:'unknown'}};throw e;}
+  finally{const el=document.querySelector('#workbuddy-status');if(el)el.innerHTML=connectionPanel();}
+}
+function workflowGuide(project=false){
+  const run=project?state.workspace.run:null,media=project&&state.media;
+  const current=!project?null:!state.workspace.source?'source':active(run)?'generate':run?.status==='awaiting_approval'?'review':run?.status==='approved'?(state.tab==='review'?'approve':media?.subtitle?.status==='approved'?'export':'video'):run?.draft?'review':state.tab==='source'?'source':'generate';
+  const steps=[
+    ['source','Source','Add verified product facts, brand tone, formats and languages.'],
+    ['generate','Generate','Select Create & review, then copy the task into WorkBuddy.'],
+    ['review','Review','Read the drafts, source quotes and fixes from the Reviewer.'],
+    ['approve','Approve','Confirm the exact content yourself. Edits require another review.'],
+    ['video','Video','Optional: add 3–5 clips, approve the cut and check subtitles.'],
+    ['export','Export','Download approved content or the finished MP4. Upload manually.']
+  ];
+  return `<section class="creator-workflow" aria-labelledby="workflow-title"><h2 id="workflow-title">From source to something you can share</h2><p>Follow the steps below. You decide what is approved and ready to upload.</p><ol>${steps.map(([id,title,description],i)=>`<li ${current===id?'aria-current="step"':''}><span class="creator-step-number">${i+1}</span><div><h3>${title}${current===id?'<span class="creator-step-current">Current step</span>':''}</h3><p>${description}</p></div></li>`).join('')}</ol></section>`;
+}
 function shell(content){
   const name=state.user?.display_name||state.user?.username||'',connections=location.pathname==='/connections';
-  root.innerHTML=`<div class="creator-shell"><header class="creator-header"><a class="creator-brand" href="/" data-nav aria-label="TrendForge home"><img src="/static/mark.svg" alt="">trendforge</a><nav class="creator-nav" aria-label="Main navigation"><a href="/" data-nav ${!connections?`aria-current="${location.pathname==='/'?'page':'location'}"`:''}>Projects</a><a href="/connections" data-nav ${connections?'aria-current="page"':''}>Connections</a></nav><div class="creator-account" role="group" aria-label="${esc('Signed in as '+name)}"><span class="creator-avatar" aria-hidden="true" title="${esc(name)}">${esc(Array.from(name)[0]?.toUpperCase()||'')}</span><span class="creator-account-name" title="${esc(name)}">${esc(name)}</span>${button('logout','Sign out')}</div></header><main id="main">${content}</main><footer class="creator-footer"><span>Source facts. Thoughtful review. Your final say.</span><span>Planner → Writer → Reviewer · Up to 3 review rounds</span></footer></div>`;
+  root.innerHTML=`<div class="creator-shell"><header class="creator-header"><a class="creator-brand" href="/" data-nav aria-label="TrendForge home"><img src="/static/mark.svg" alt="">trendforge</a><nav class="creator-nav" aria-label="Main navigation"><a href="/" data-nav ${!connections?`aria-current="${location.pathname==='/'?'page':'location'}"`:''}>Projects</a><a href="/connections" data-nav ${connections?'aria-current="page"':''}>Connections</a></nav><div class="creator-account" role="group" aria-label="${esc('Signed in as '+name)}"><span class="creator-avatar" aria-hidden="true" title="${esc(name)}">${esc(Array.from(name)[0]?.toUpperCase()||'')}</span><span class="creator-account-name" title="${esc(name)}">${esc(name)}</span>${button('logout','Sign out')}</div></header><section id="workbuddy-status" aria-label="WorkBuddy connection" aria-live="polite">${connectionPanel()}</section><main id="main">${content}</main><footer class="creator-footer"><span>Source facts. Thoughtful review. Your final say.</span><span>Planner → Writer → Reviewer · Up to 3 review rounds</span></footer></div>`;
 }
 function auth(register=false){
   root.innerHTML=`<main class="creator-shell" id="main"><header class="creator-header"><span class="creator-brand"><img src="/static/mark.svg" alt="">trendforge</span></header><form class="creator-form" id="auth-form" data-register="${register}"><span class="creator-label">Your creator workspace</span><h1>${register?'Create your account':'Welcome back.'}</h1><p>Make something you feel confident sharing.</p><div class="field"><label for="username">Username</label><input id="username" name="username" autocomplete="username" required minlength="3" maxlength="32"></div><div class="field"><label for="password">Password</label><input id="password" name="password" type="password" autocomplete="${register?'new-password':'current-password'}" minlength="8" required></div><button class="btn btn-primary" type="submit">${register?'Create account':'Sign in'}</button><p class="creator-form-error" id="auth-error" role="alert"></p><button type="button" class="btn btn-quiet" data-action="${register?'show-login':'show-register'}">${register?'Already have an account? Sign in':'Create an account'}</button></form></main>`;
 }
-async function loadProject(pid){if(state.pid!==pid)state.pendingReferences=null;state.workspace=await api(`/projects/${pid}/creator`);state.pid=pid;}
+async function loadProject(pid){if(state.pid!==pid){state.pendingReferences=null;state.media=null;}state.workspace=await api(`/projects/${pid}/creator`);state.pid=pid;}
 async function route(){
   const match=location.pathname.match(/^\/projects\/([^/]+)(?:\/(source|review|audit|video|research))?/);
   state.dirty=false;
@@ -36,7 +65,7 @@ async function route(){
 async function go(path){if(state.dirty&&!confirm('Leave without saving your changes?'))return;history.pushState({},'',path);await route();window.scrollTo({top:0,behavior:'instant'});}
 function home(){
   document.title='TrendForge — Create with confidence';
-  shell(`<section class="creator-hero"><span class="creator-label">A little more confidence</span><h1>Your story.<br>Your facts. Your final say.</h1><p>Turn one product sheet into content for different formats. A Planner shapes the idea, a Writer drafts it, and a Reviewer helps you catch unsupported claims before you share.</p></section><div class="creator-grid"><form class="creator-card" id="new-project"><h2>Start with your product.</h2><div class="field"><label for="project-title">Project name</label><input id="project-title" name="niche" required minlength="2" maxlength="100" placeholder="Your product launch"></div><div class="field"><label for="project-audience">Who are you creating for?</label><input id="project-audience" name="audience" required minlength="2" maxlength="200" placeholder="First-time customers, students, your community…"></div><button class="btn btn-primary" type="submit">Create project</button></form><aside class="creator-card"><h2>What happens here</h2><p>Add the facts you can stand behind. Choose your formats and languages, then let the team draft and review.</p><p>You will see every rejection, the rule behind it, and what changed. If the team cannot resolve an issue after three rounds, it stops and asks for your help.</p><p class="creator-note">Nothing is published automatically. Approved content can become a vertical MP4 with your own clips and reviewed subtitles.</p></aside></div><section class="creator-section"><h2>Your projects</h2><div class="creator-grid">${state.projects.map(p=>`<a class="creator-card creator-project" href="/projects/${p.id}/source" data-nav><h3>${esc(p.niche)}</h3><p>${esc(p.audience)}</p><span class="creator-muted">Open workspace →</span></a>`).join('')||'<p class="creator-muted">Your first project will appear here.</p>'}</div></section>`);
+  shell(`<section class="creator-hero"><span class="creator-label">A little more confidence</span><h1>Your story.<br>Your facts. Your final say.</h1><p>Turn one product sheet into content for different formats. A Planner shapes the idea, a Writer drafts it, and a Reviewer helps you catch unsupported claims before you share.</p></section>${workflowGuide()}<div class="creator-grid"><form class="creator-card" id="new-project"><h2>Start with your product.</h2><div class="field"><label for="project-title">Project name</label><input id="project-title" name="niche" required minlength="2" maxlength="100" placeholder="Your product launch"></div><div class="field"><label for="project-audience">Who are you creating for?</label><input id="project-audience" name="audience" required minlength="2" maxlength="200" placeholder="First-time customers, students, your community…"></div><button class="btn btn-primary" type="submit">Create project</button></form><aside class="creator-card"><h2>What happens here</h2><p>Add the facts you can stand behind. Choose your formats and languages, then let the team draft and review.</p><p>You will see every rejection, the rule behind it, and what changed. If the team cannot resolve an issue after three rounds, it stops and asks for your help.</p><p class="creator-note">Nothing is published automatically. Approved content can become a vertical MP4 with your own clips and reviewed subtitles.</p></aside></div><section class="creator-section"><h2>Your projects</h2><div class="creator-grid">${state.projects.map(p=>`<a class="creator-card creator-project" href="/projects/${p.id}/source" data-nav><h3>${esc(p.niche)}</h3><p>${esc(p.audience)}</p><span class="creator-muted">Open workspace →</span></a>`).join('')||'<p class="creator-muted">Your first project will appear here.</p>'}</div></section>`);
 }
 function sourceForm(){
   const {project:p,source:s,run}=state.workspace;const value=s||{};const references=state.pendingReferences||value.inspiration_video_ids||[];
@@ -58,7 +87,7 @@ function auditPage(){
 function renderProject(){
   const {project:p}=state.workspace;
   document.title=p.niche+' — TrendForge';
-  shell(`<section class="creator-hero" style="padding-bottom:8px"><span class="creator-label">Product launch workspace</span><h1 style="font-size:34px">${esc(p.niche)}</h1><p>${esc(p.audience)}</p></section><nav class="creator-tabs" aria-label="Content workflow">${[['research','Trend research'],['source','Source & rules'],['review','Create & review'],['video','Video studio'],['audit','Audit & revisions']].map(([k,v])=>`<a href="/projects/${p.id}/${k}" data-nav ${state.tab===k?'aria-current="page"':''}>${v}</a>`).join('')}</nav>${state.tab==='source'?sourceForm():state.tab==='audit'?auditPage():state.tab==='video'?videoPage():state.tab==='research'?researchPage():reviewPage()}`);
+  shell(`<section class="creator-hero" style="padding-bottom:8px"><span class="creator-label">Product launch workspace</span><h1 style="font-size:34px">${esc(p.niche)}</h1><p>${esc(p.audience)}</p></section>${workflowGuide(true)}<nav class="creator-tabs" aria-label="Content workflow">${[['research','Trend research'],['source','Source & rules'],['review','Create & review'],['video','Video studio'],['audit','Audit & revisions']].map(([k,v])=>`<a href="/projects/${p.id}/${k}" data-nav ${state.tab===k?'aria-current="page"':''}>${v}</a>`).join('')}</nav>${state.tab==='source'?sourceForm():state.tab==='audit'?auditPage():state.tab==='video'?videoPage():state.tab==='research'?researchPage():reviewPage()}`);
 }
 async function renderConnections(){
   document.title='Connections — TrendForge';
@@ -80,6 +109,7 @@ document.addEventListener('click',event=>{
     document.querySelector('#edit-content').innerHTML=`<form id="content-edit-form" data-edit><p class="creator-note">Every edit is reviewed again. Evidence stays visible; unsupported changes will be rejected. A tone preference is proposed separately for your approval.</p><div class="creator-grid">${contentCards(state.workspace.run,true)}</div><button class="btn btn-primary" style="margin-top:20px" type="submit">Send edits to Reviewer</button></form>`;return;
   }
   work(async()=>{
+    if(action==='refresh-connection'){await refreshConnection();notify('Connection status refreshed.');return;}
     if(await mediaAction(action,el))return;
     const r=state.workspace?.run,base=`/projects/${state.pid}/creator`;
     if(action==='logout'){await api('/session',{method:'DELETE'});state.csrf='';state.user=null;state.pid=null;auth();}
@@ -133,6 +163,11 @@ document.addEventListener('submit',event=>{
 document.addEventListener('input',e=>{if(e.target.closest('[data-edit]'))state.dirty=true;});
 window.addEventListener('beforeunload',e=>{if(state.dirty||state.uploading){e.preventDefault();e.returnValue='';}});
 window.addEventListener('popstate',()=>work(route));
+let checkingConnection=false;
+setInterval(async()=>{
+  if(checkingConnection||state.busy||!state.user||document.hidden)return;
+  checkingConnection=true;try{await refreshConnection();}catch{}finally{checkingConnection=false;}
+},15000);
 let polling=false;
 setInterval(async()=>{
   if(polling||state.busy||!state.pid||state.dirty||state.uploading)return;

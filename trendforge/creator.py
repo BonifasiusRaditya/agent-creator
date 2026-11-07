@@ -11,7 +11,7 @@ import os
 import re
 import time
 import zipfile
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from html import escape
 from typing import Literal
 from xml.etree import ElementTree
@@ -363,8 +363,15 @@ def rules(request: Request):
 def status(request: Request):
     s = request.app.state.settings
     workbuddy = s.get("ai_engine") == "workbuddy"
+    # Reuse persisted activity on unrevoked, owner-scoped tokens across restarts/instances.
+    # Token activity is written at most every five minutes, so allow a ten-minute window.
+    seen = max((t["last_used_at"] for t in request.app.state.db.tokens(request.state.user["id"])
+                if t["last_used_at"]), default=None)
+    recent = bool(seen and 0 <= (datetime.now(timezone.utc) - datetime.fromisoformat(seen)).total_seconds() <= 600)
     return {"engine": s.get("ai_engine"), "configured": s.public()["ai_connected"],
             "model": "Selected in WorkBuddy" if workbuddy else s.get("ai_model"),
+            "workbuddy_connection": {"state": "not_selected" if not workbuddy else "connected" if recent else "inactive" if seen else "not_connected",
+                                    "last_seen_at": seen, "verification_window_seconds": 600},
             "database": request.app.state.db.backend, "max_iterations": 3, "budget_seconds": s.agent_budget_seconds()}
 
 

@@ -44,6 +44,8 @@ Turso is selected automatically when its URL/token are configured. A failed Turs
 5. Review all output, tick the confirmation and approve the exact revision. Download a ZIP with text, SVG covers, source/rule snapshots and the audit. Upload manually wherever you choose.
 6. Edits always trigger fresh review. Tone preferences inferred from edits remain proposals until separately approved. Approved examples from your own projects guide future drafts.
 
+The Projects page and each project show a six-step guide: **Source → Generate → Review → Approve → Video → Export**, with an explanation of each step and the current project stage. Video is optional; approved text can be downloaded directly.
+
 ## Make a finished video
 
 1. Optionally open **Trend research**, search YouTube and select up to 10 creative references. Save Source & rules afterward. Titles and channel metadata guide creative angles; factual claims still use your product facts only.
@@ -67,6 +69,8 @@ WorkBuddy is the AI engine (`TRENDFORGE_AI_ENGINE=workbuddy`, the default).
 2. In WorkBuddy desktop, add the `trendforge` MCP server from `mcp.json` and install `skills/trendforge/SKILL.md`. After updating TrendForge, reinstall the skill from a fresh package.
 3. Keep the TrendForge server running; the connector calls it. Ask WorkBuddy to call `trendforge_health` to confirm engine `workbuddy`.
 4. Start a run on the website (**Create & review**), copy its WorkBuddy task and paste it into WorkBuddy. The five MCP tools exchange each role's schema-validated result; human approval/export are deliberately absent.
+
+The connection banner appears across the signed-in website and refreshes every 15 seconds, with a manual **Refresh status** button. **WorkBuddy connected recently** means an authenticated personal connector contacted TrendForge within the last ten minutes, using persisted activity on unrevoked tokens. Generating a package or selecting the engine alone never counts as a connection. An older contact asks for a new check; ask WorkBuddy to run `trendforge_health`. This reports recent connector activity, not continuous desktop availability or completed agent execution.
 
 An OpenAI-compatible provider remains available as an optional fallback (`TRENDFORGE_AI_ENGINE=openai_compatible` with `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`).
 
