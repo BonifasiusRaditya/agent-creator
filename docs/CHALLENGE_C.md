@@ -10,7 +10,7 @@ Reviewed against handbook pp.8–11 and general submission/accountability requir
 | At least two formats from source facts alone | Short-video script, social caption, optional marketplace listing; exact fact IDs/quotes | Exact requested format/language validation; fabricated evidence/number cases |
 | Review every draft against documented rules | Facts, medical claims, tone, advertising, halal, translation consistency, untrusted input | Every-line coverage required; cited rule/line/quote/reason/fix; incomplete review fails closed |
 | Reject → remediate → approve | Reviewer findings return to Writer; all lines reviewed again; human approval follows | Real Gemini medical-claim edit rejected and repaired, then website approval and ZIP download |
-| Stop after at most three rounds | Fixed iteration bound and 80-second execution budget | Three persistent rejections escalate and export remains blocked |
+| Stop after at most three rounds | Fixed iteration bound and configurable execution budget (default 3 minutes) | Three persistent rejections escalate and export remains blocked |
 | Human approval before publication | Exact current revision and source; operator session required | Connector approval denied; preapproval export denied; no publication tools |
 | Exchange/revision history | Source/rule snapshots, role inputs/outputs/prompts, issues, timestamps, linked human edits | Audit view and exported audit JSON |
 | Learn brand tone (bonus) | Most recent own approved examples supplied to agents | Approved-example reuse test; no foreign-owner history |
@@ -34,7 +34,7 @@ Real Gemini 3.5 Flash-Lite test, 1 November 2026:
 - A second full journey on the final server created a project, loaded/saved fictional facts, called Gemini, automatically corrected an invalid source quote, and received website approval. All three roles were recorded; the invalid quote was blocked despite a permissive semantic review. This also exercised approved tone examples without allowing them to replace the current source.
 - These are individual local observations, not averages, performance guarantees, legal certification, or proof of user time savings. Usability/confidence should be measured with beginner creators.
 
-Local artifacts: `test-results/creator-live/report.json`, `generation.json`, `revision.json`, `approved-content.zip`. Re-run the opt-in `scripts.check_creator_live` only when you intend to call the real Gemini API. Its isolated local test account is not a production credential.
+Local artifacts: `test-results/creator-live/report.json`, `generation.json`, `revision.json`, `approved-content.zip`. These are historical Gemini records; the Gemini engine and its `scripts.check_creator_live` script have since been removed in favour of WorkBuddy. The script's isolated local test account was never a production credential.
 
 Screenshots:
 
@@ -75,4 +75,4 @@ Integration issues encountered and corrected: first generation used 2.5 Flash-Li
 | 5:00–5:45 | Saved escalation + audit | Show a genuinely recorded three-failure synthetic case, clearly labeled simulated, or an actual clarification run. Explain limits and no publishing authority. |
 | 5:45–6:30 | Architecture, test results, real WorkBuddy evidence | Explain ownership/permission boundaries, measured timings, remaining limitations and actual WorkBuddy learnings. Do not substitute connector installation for evidence. |
 
-For the 90-second surprise test: paste the supplied facts and requested angle, choose two formats and one language, save, run, inspect cited findings and stop for human approval. The 80-second execution limit leaves a small review margin, but provider quota/latency can still cause escalation; disclose that outcome.
+For the 90-second surprise test: paste the supplied facts and requested angle, choose two formats and one language, save, run, inspect cited findings and stop for human approval. The default 3-minute execution budget is longer than this test. For it, set `TRENDFORGE_AGENT_BUDGET_SECONDS=80` and restart so the run stops in time; WorkBuddy latency can still cause escalation; disclose that outcome.

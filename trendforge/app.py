@@ -110,8 +110,10 @@ def create_app(directory=None):
     async def lifespan(app):
         directory.mkdir(parents=True, exist_ok=True)
         settings = Settings(directory)
-        if settings.get("ai_engine") not in {"workbuddy", "openai_compatible", "gemini"}:
-            raise RuntimeError("TRENDFORGE_AI_ENGINE must be workbuddy, gemini or openai_compatible.")
+        if settings.get("ai_engine") not in {"workbuddy", "openai_compatible"}:
+            raise RuntimeError("TRENDFORGE_AI_ENGINE must be workbuddy or openai_compatible. Gemini is no longer supported.")
+        if not 30 <= settings.agent_budget_seconds() <= 3600:
+            raise RuntimeError("TRENDFORGE_AGENT_BUDGET_SECONDS must be a whole number from 30 to 3600.")
         if settings.get("stock_provider") not in {"pixabay", "pexels"}:
             raise RuntimeError("TRENDFORGE_STOCK_PROVIDER must be pixabay or pexels.")
         if settings.get("speech_model") not in {"tiny", "base", "small"}:

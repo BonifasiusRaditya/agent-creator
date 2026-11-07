@@ -16,9 +16,7 @@ Required web environment:
 ```dotenv
 TURSO_DATABASE_URL=libsql://your-existing-database.turso.io
 TURSO_AUTH_TOKEN=your-private-token
-TRENDFORGE_AI_ENGINE=gemini
-GEMINI_API_KEY=your-existing-private-key
-GEMINI_MODEL=gemini-3.5-flash-lite
+TRENDFORGE_AI_ENGINE=workbuddy
 TRENDFORGE_WORKER=external
 TRENDFORGE_DATA_DIR=/tmp/trendforge
 TRENDFORGE_ALLOWED_HOSTS=your-project.vercel.app,your-custom-domain.example
@@ -29,7 +27,7 @@ Use only your actual hostnames, without a scheme or path. System-provided VERCEL
 
 Account creation is public with a username and password; no invite code is required. An old `TRENDFORGE_INVITE_CODE` variable has no effect and can be deleted. For a fresh installation, register the owner first, then add their existing username to `TRENDFORGE_ADMIN_USERNAMES` and redeploy. Public registration cannot claim names reserved by this list. Existing accounts and passwords continue to work.
 
-The Vercel runtime automatically disables the embedded video worker. AI execution is attached to the ASGI response's BackgroundTasks instead of an unowned asyncio task. Its 80-second agent budget fits the configured 120-second function limit. This is bounded request execution, not a durable long-running job scheduler.
+The Vercel runtime automatically disables the embedded video worker. With WorkBuddy, each agent step arrives as its own short connector request, so the run budget (`TRENDFORGE_AGENT_BUDGET_SECONDS`, default 180) is not bound by the function limit; point the connector's `TRENDFORGE_URL` at the deployed site. If you switch to the optional `openai_compatible` engine, its run executes inside one function's BackgroundTasks, so set the budget to 100 or less to fit the configured 120-second function limit. This is bounded request execution, not a durable long-running job scheduler.
 
 ## Video needs an external worker and shared storage
 

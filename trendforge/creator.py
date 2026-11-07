@@ -285,15 +285,16 @@ def submit(db, run, role, result):
 
 async def execute(app, pid, rid):
     db = app.state.db
+    budget = app.state.settings.agent_budget_seconds()
     started = time.monotonic()
     try:
         while True:
             run = db.doc(pid, rid, "creator_run")
             if run["status"] != "running":
                 break
-            remaining = 80 - (time.monotonic()-started)
+            remaining = budget - (time.monotonic()-started)
             if remaining < 1:
-                raise AppError("The 80-second agent budget expired. Review the partial audit and retry later.", "AGENT_TIMEOUT", 408)
+                raise AppError(f"The {budget}-second agent budget expired. Review the partial audit and retry later.", "AGENT_TIMEOUT", 408)
             task = task_for(run)
             result = await asyncio.wait_for(provider_json(app.state.settings, task["system"], task["context"], timeout=min(25, remaining)), timeout=remaining)
             with db.lock:
@@ -319,8 +320,6 @@ def begin(request, pid, key, edited=None, background_tasks=None):
     with db.lock:
         p, source, prior = current(db, pid)
         db.assert_editable(pid)
-        if request.app.state.settings.get("ai_engine") == "gemini" and (request.app.state.settings.get("gemini_model") or "gemini-3.5-flash-lite") not in {"gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-2.5-flash"}:
-            raise AppError("Select a supported Gemini model with a documented free tier. No paid model was called.", "FREE_MODEL_REQUIRED", 409)
         if not source:
             raise AppError("Save your source facts first.", "SOURCE_REQUIRED", 409)
         if prior and prior.get("request_key") == key:
@@ -339,7 +338,7 @@ def begin(request, pid, key, edited=None, background_tasks=None):
             "plan": prior.get("plan") if edited and prior else None, "parent_run_id": prior["id"] if edited and prior else None,
             "source_id": source["id"], "trace": [], "issues": [], "review_passed": False,
             "request_key": key, "draft": edited, "engine": engine, "started_at": now() if engine != "workbuddy" else None,
-            "model": request.app.state.settings.get("gemini_model") if engine == "gemini" else request.app.state.settings.get("ai_model") if engine == "openai_compatible" else "WorkBuddy"})
+            "model": request.app.state.settings.get("ai_model") if engine == "openai_compatible" else "WorkBuddy"})
         db.update_project(pid, {**reset_video(p), "creator_run_id": run["id"]}, p["revision"])
         db.event(pid, "creator_run_started", {"run_id": run["id"], "source_id": source["id"]})
     if run["engine"] != "workbuddy":
@@ -355,17 +354,18 @@ def begin(request, pid, key, edited=None, background_tasks=None):
 
 
 @router.get("/creator/rules")
-def rules():
-    return {"rules": RULES, "max_iterations": 3, "budget_seconds": 80,
+def rules(request: Request):
+    return {"rules": RULES, "max_iterations": 3, "budget_seconds": request.app.state.settings.agent_budget_seconds(),
         "scenario": "Product launch", "publishing": "Manual only; agents have no publishing tools"}
 
 
 @router.get("/creator/status")
 def status(request: Request):
     s = request.app.state.settings
+    workbuddy = s.get("ai_engine") == "workbuddy"
     return {"engine": s.get("ai_engine"), "configured": s.public()["ai_connected"],
-            "model": (s.get("gemini_model") or "gemini-3.5-flash-lite") if s.get("ai_engine") == "gemini" else s.get("ai_model"),
-            "database": request.app.state.db.backend, "max_iterations": 3, "budget_seconds": 80}
+            "model": "Selected in WorkBuddy" if workbuddy else s.get("ai_model"),
+            "database": request.app.state.db.backend, "max_iterations": 3, "budget_seconds": s.agent_budget_seconds()}
 
 
 @router.get("/projects/{pid}/creator")
@@ -374,7 +374,8 @@ def workspace(pid: str, request: Request):
     with db.lock:
         p, source, run = current(db, pid)
         # ponytail: persisted deadline recovers interrupted runs without a separate scheduler.
-        if run and run["status"] == "running" and run.get("started_at") and time.time() - datetime.fromisoformat(run["started_at"]).timestamp() > 85:
+        # Five seconds of grace so the run's own budget check reports first.
+        if run and run["status"] == "running" and run.get("started_at") and time.time() - datetime.fromisoformat(run["started_at"]).timestamp() > request.app.state.settings.agent_budget_seconds() + 5:
             run = change(db, run, status="escalated", stage="Human", review_passed=False,
                          message="The agent time budget expired. Review the saved audit and start a new run.")
         return {"project": p, "source": source, "run": run, "rules": RULES,
@@ -442,7 +443,7 @@ def agent_step(pid: str, rid: str, request: Request, body: dict = Body(...)):
         run = db.doc(pid, rid, "creator_run")
         if run["engine"] != "workbuddy" or run["revision"] != body.get("revision"):
             raise AppError("This agent step is stale or belongs to another engine.", "STALE_AGENT_STEP", 409)
-        if time.time() - datetime.fromisoformat(run.get("started_at", run["created_at"])).timestamp() > 80:
+        if time.time() - datetime.fromisoformat(run.get("started_at") or run["created_at"]).timestamp() > request.app.state.settings.agent_budget_seconds():
             return change(db, run, status="escalated", stage="Human", message="Agent time budget expired.")
         return submit(db, run, body.get("role"), body.get("result"))
 

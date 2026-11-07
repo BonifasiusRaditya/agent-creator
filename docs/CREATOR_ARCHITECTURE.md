@@ -2,7 +2,7 @@
 
 The website now includes the full video handoff documented in [COMPLETE_VIDEO.md](COMPLETE_VIDEO.md). Operator-only `POST /projects/{p}/creator/video-brief` accepts the approved run revision, language, duration, current project revision and explicit confirmation. It derives a video brief directly from the approved short-video script. Upload, trim/sequence approval, prepare/transcribe jobs, subtitle correction/approval, export and MP4/SRT downloads reuse the original media API and worker. Source/content changes invalidate the bound video timeline and release; middleware blocks stale or unreviewed output. Selected YouTube reference IDs are checked against this project's actual research and snapshotted as creative context, not factual product evidence.
 
-The existing FastAPI service, account security and document database are reused. The new workflow adds one router and a small browser module. No agent framework, vector database, hosted image API or extra model subscription is required. Gemini uses its native generation API through the existing HTTP client; OpenAI-compatible providers remain supported. WorkBuddy can execute the same role contracts through five stdio MCP tools.
+The existing FastAPI service, account security and document database are reused. The new workflow adds one router and a small browser module. No agent framework, vector database, hosted image API or extra model subscription is required. WorkBuddy executes the role contracts through five stdio MCP tools, using its own signed-in account and model. An OpenAI-compatible provider remains supported as an optional fallback engine. Gemini is no longer supported.
 
 ```mermaid
 flowchart TD
@@ -18,7 +18,7 @@ flowchart TD
   H --> X[Download text, SVG covers, source, rules and audit ZIP]
   H -->|Edit| R
   P & W & R & H & E & X --> D[(Owned project documents + events: Turso / SQLite)]
-  M[Gemini native API OR WorkBuddy MCP] -. role outputs only .-> P & W & R
+  M[WorkBuddy MCP, or optional OpenAI-compatible fallback] -. role outputs only .-> P & W & R
 ```
 
 ## Trust boundaries
@@ -31,7 +31,7 @@ Source text and all generated text remain data. System prompts describe mandator
 
 `waiting_for_workbuddy → running → awaiting_approval → approved` is the successful path. Failures produce `escalated`; the operator can cancel active runs. Graceful shutdown records interruption. A persisted deadline lets a subsequent workspace read recover an abandoned running job after a crash. A single server instance per data folder is required; this is an in-process task runner, not a distributed queue.
 
-Iteration 1 starts with Planner, then Writer/Reviewer. A rejection increments the iteration and returns to Writer. Round 3 rejection escalates with outstanding issues. An edited draft starts a new linked run at Reviewer; any required Writer repair is subject to the same bound. The agent budget is 80 seconds with provider requests capped at 25 seconds each. A new manual run is an explicit user action; agents cannot start one to evade the limit.
+Iteration 1 starts with Planner, then Writer/Reviewer. A rejection increments the iteration and returns to Writer. Round 3 rejection escalates with outstanding issues. An edited draft starts a new linked run at Reviewer; any required Writer repair is subject to the same bound. The agent budget is set by `TRENDFORGE_AGENT_BUDGET_SECONDS` (default 180 seconds) and starts when WorkBuddy first requests a role; fallback-provider requests are capped at 25 seconds each. A new manual run is an explicit user action; agents cannot start one to evade the limit.
 
 ## API
 

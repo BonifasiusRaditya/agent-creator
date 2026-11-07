@@ -27,16 +27,14 @@ class Settings:
     """Encrypted local configuration. Credentials never appear in public responses."""
 
     defaults = {
-        "gemini_api_key": "", "gemini_model": "gemini-3.5-flash-lite",
-        "ai_engine": "workbuddy",
+        "ai_engine": "workbuddy", "agent_budget_seconds": "180",
         "ai_base_url": "", "ai_model": "", "ai_api_key": "",
         "youtube_api_key": "", "pexels_api_key": "", "pixabay_api_key": "",
         "stock_provider": "pixabay", "speech_model": "base",
         "password_hash": "", "password_salt": "", "service_token": "",
     }
     env_names = {
-        "gemini_api_key": "GEMINI_API_KEY", "gemini_model": "GEMINI_MODEL",
-        "ai_engine": "TRENDFORGE_AI_ENGINE",
+        "ai_engine": "TRENDFORGE_AI_ENGINE", "agent_budget_seconds": "TRENDFORGE_AGENT_BUDGET_SECONDS",
         "ai_base_url": "AI_BASE_URL", "ai_model": "AI_MODEL", "ai_api_key": "AI_API_KEY",
         "youtube_api_key": "YOUTUBE_API_KEY", "pexels_api_key": "PEXELS_API_KEY",
         "pixabay_api_key": "PIXABAY_API_KEY", "stock_provider": "TRENDFORGE_STOCK_PROVIDER",
@@ -83,10 +81,19 @@ class Settings:
                 pass
             temp.replace(self.path)
 
+    def agent_budget_seconds(self):
+        """Total seconds one agent run may take, across every role and review round."""
+        try:
+            return int(str(self.get("agent_budget_seconds")).strip())
+        except ValueError:
+            return 0  # Rejected at startup.
+
     def public(self):
+        engine = self.get("ai_engine")
         return {
-            "ai_engine": self.get("ai_engine"),
-            "ai_connected": bool(self.get("gemini_api_key")) if self.get("ai_engine") == "gemini" else self.get("ai_engine") == "openai_compatible" and bool(self.get("ai_base_url") and self.get("ai_model")),
+            "ai_engine": engine,
+            # WorkBuddy uses its own signed-in account, so it needs no key here.
+            "ai_connected": engine == "workbuddy" or engine == "openai_compatible" and bool(self.get("ai_base_url") and self.get("ai_model")),
             "ai_key_configured": bool(self.get("ai_api_key")),
             "youtube_configured": bool(self.get("youtube_api_key")),
             "pexels_configured": bool(self.get("pexels_api_key")),

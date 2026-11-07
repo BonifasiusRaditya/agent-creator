@@ -56,7 +56,7 @@ def creator_workspace(project_id: str) -> dict:
 
 @mcp.tool()
 def creator_next_step(project_id: str, run_id: str) -> dict:
-    """Get the current role, revision, system instructions, untrusted context and exact JSON schema. Starts the 80-second WorkBuddy run budget. Stop when no role is returned."""
+    """Get the current role, revision, system instructions, untrusted context and exact JSON schema. The first call starts the run's time budget (budget_seconds in trendforge_health, 3 minutes by default). Stop when no role is returned."""
     return call("GET", f"/projects/{project_id}/creator/runs/{run_id}/next")
 
 

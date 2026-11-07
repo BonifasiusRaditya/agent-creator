@@ -4,17 +4,17 @@ import io
 import json
 import time
 import zipfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
-import httpx
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from conftest import another_user, project
+from conftest import another_user, project, sign_up
 from test_workbuddy import connector_headers
 from trendforge import creator
+from trendforge.app import create_app
 from trendforge.errors import AppError
-from trendforge.integrations import provider_json
 
 
 def source(**extra):
@@ -278,16 +278,49 @@ def test_certificate_expiring_after_review_blocks_human_approval_and_export(clie
     assert client.get(path+'/export').status_code==409
 
 
-def test_gemini_uses_official_endpoint_and_redacts_key(client, monkeypatch):
-    import asyncio
-    settings = client.app.state.settings
-    settings.update({"ai_engine": "gemini", "gemini_api_key": "test-only-gemini-key"})
-    original = httpx.AsyncClient
-    def handler(request):
-        assert str(request.url) == 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent'
-        assert request.headers['x-goog-api-key'] == 'test-only-gemini-key'
-        assert json.loads(request.content)['generationConfig']['responseMimeType'] == 'application/json'
-        return httpx.Response(200, json={"candidates": [{"content": {"parts": [{"text": '{"ok":true}'}]}}]})
-    monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: original(transport=httpx.MockTransport(handler), **kw))
-    assert asyncio.run(provider_json(settings, 'test role', {})) == {"ok": True}
-    assert 'test-only-gemini-key' not in client.get('/api/v1/creator/status').text
+def started(client, base, run, seconds_ago):
+    """Begin a WorkBuddy run, then backdate its start to simulate elapsed agent time."""
+    path = base + f"/runs/{run['id']}"
+    client.get(path + "/next", headers=connector_headers(client))
+    current = client.app.state.db.doc(client.get(base).json()["project"]["id"], run["id"], "creator_run")
+    current = creator.change(client.app.state.db, current, started_at=(datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)).isoformat())
+    return path, {"revision": current["revision"], "role": "Planner",
+        "result": {"angle": "An honest product introduction", "approach": "List supported attributes.", "fact_ids": ["F1"]}}
+
+
+def test_workbuddy_budget_defaults_to_three_minutes(client):
+    status = client.get("/api/v1/creator/status").json()
+    assert status["engine"] == "workbuddy" and status["configured"] is True and status["budget_seconds"] == 180
+    _, base, _ = setup(client)
+    run = client.post(base + "/runs", headers={"Idempotency-Key": "slow-but-in-budget"}).json()
+    path, body = started(client, base, run, 120)  # Past the old 80-second limit.
+    response = client.post(path + "/step", json=body, headers=connector_headers(client))
+    assert response.status_code == 200 and response.json()["stage"] == "Writer", response.text
+    assert client.get(base).json()["run"]["status"] == "running"
+
+
+def test_workbuddy_step_after_budget_escalates(client):
+    _, base, _ = setup(client)
+    run = client.post(base + "/runs", headers={"Idempotency-Key": "over-budget"}).json()
+    path, body = started(client, base, run, 181)
+    response = client.post(path + "/step", json=body, headers=connector_headers(client))
+    assert response.json()["status"] == "escalated" and response.json()["message"] == "Agent time budget expired."
+
+
+def test_budget_is_configurable_and_validated(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRENDFORGE_AGENT_BUDGET_SECONDS", "300")
+    with TestClient(create_app(tmp_path / "a")) as c:
+        sign_up(c)
+        assert c.get("/api/v1/creator/status").json()["budget_seconds"] == 300
+    for bad in ("10", "minutes", "4000"):
+        monkeypatch.setenv("TRENDFORGE_AGENT_BUDGET_SECONDS", bad)
+        with pytest.raises(RuntimeError, match="TRENDFORGE_AGENT_BUDGET_SECONDS"):
+            with TestClient(create_app(tmp_path / bad)):
+                pass
+
+
+def test_gemini_engine_is_rejected_at_startup(tmp_path, monkeypatch):
+    monkeypatch.setenv("TRENDFORGE_AI_ENGINE", "gemini")
+    with pytest.raises(RuntimeError, match="Gemini is no longer supported"):
+        with TestClient(create_app(tmp_path / "data")):
+            pass

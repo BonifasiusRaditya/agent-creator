@@ -22,15 +22,14 @@ For Vercel deployment, follow [VERCEL.md](docs/VERCEL.md). The default dependenc
 Copy `.env.example` to `.env` only for a new installation. Preserve an existing .env.
 
 ```dotenv
-TRENDFORGE_AI_ENGINE=gemini
-GEMINI_API_KEY=your-private-google-ai-studio-key
-GEMINI_MODEL=gemini-3.5-flash-lite
+TRENDFORGE_AI_ENGINE=workbuddy
+TRENDFORGE_AGENT_BUDGET_SECONDS=180
 TURSO_DATABASE_URL=libsql://your-database.turso.io
 TURSO_AUTH_TOKEN=your-private-turso-token
 TRENDFORGE_ADMIN_USERNAMES=
 ```
 
-Credentials stay on the backend. Use an eligible Gemini free-tier project. Google determines eligibility, billing and quota; the program never switches to a different paid model. Free-tier source content may be used to improve Google's products: use public or fictional product facts. Model 2.5 Flash-Lite returned 404 for the tested new account; 3.5 Flash-Lite succeeded. [Google pricing](https://ai.google.dev/gemini-api/docs/pricing), [native generation API](https://ai.google.dev/api/generate-content).
+The Planner, Writer and Reviewer run in WorkBuddy, which uses its own signed-in account and model, so TrendForge needs no AI API key. Credentials stay on the backend. `TRENDFORGE_AGENT_BUDGET_SECONDS` is the total time for one run across all roles and review rounds (default 180, allowed 30–3600). Gemini is no longer supported; a `.env` that still selects it stops at startup with a clear message.
 
 Registration is public and requires only a username and password. The obsolete `TRENDFORGE_INVITE_CODE` setting is ignored and can be removed. For a new installation, register the owner first, then add that existing username to `TRENDFORGE_ADMIN_USERNAMES` and restart/redeploy. Names in this list are reserved against public registration; existing accounts can still sign in.
 
@@ -62,7 +61,14 @@ See [complete video acceptance evidence](docs/COMPLETE_VIDEO.md), including an a
 
 ## WorkBuddy
 
-Gemini runs directly from the website. To use WorkBuddy instead, select `TRENDFORGE_AI_ENGINE=workbuddy` in .env and restart. In Connections generate your personal connector configuration and install it in WorkBuddy. The backend must remain reachable from that WorkBuddy process. Start a website run and copy its WorkBuddy task. The five MCP tools exchange each role's schema-validated result; human approval/export are deliberately absent. Connector tokens can be revoked through the existing tokens API.
+WorkBuddy is the AI engine (`TRENDFORGE_AI_ENGINE=workbuddy`, the default).
+
+1. In **Connections**, select **Download WorkBuddy package**. The zip holds `mcp.json` with a personal connector token, the TrendForge skill and an icon. Keep it private; each download creates a new token, which you can revoke on the same page.
+2. In WorkBuddy desktop, add the `trendforge` MCP server from `mcp.json` and install `skills/trendforge/SKILL.md`. After updating TrendForge, reinstall the skill from a fresh package.
+3. Keep the TrendForge server running; the connector calls it. Ask WorkBuddy to call `trendforge_health` to confirm engine `workbuddy`.
+4. Start a run on the website (**Create & review**), copy its WorkBuddy task and paste it into WorkBuddy. The five MCP tools exchange each role's schema-validated result; human approval/export are deliberately absent.
+
+An OpenAI-compatible provider remains available as an optional fallback (`TRENDFORGE_AI_ENGINE=openai_compatible` with `AI_BASE_URL`, `AI_MODEL`, `AI_API_KEY`).
 
 Read [the workflow skill](workbuddy/skills/trendforge/SKILL.md), [architecture and API](docs/CREATOR_ARCHITECTURE.md), [accountability sheet](docs/ACCOUNTABILITY.md), and [Challenge C evidence/submission guide](docs/CHALLENGE_C.md).
 
@@ -70,9 +76,9 @@ Read [the workflow skill](workbuddy/skills/trendforge/SKILL.md), [architecture a
 
 ```powershell
 uv run --extra video pytest -q
-uv run --extra video python -m scripts.check_creator_live
+$env:TRENDFORGE_TOKEN = "<a connector token from Connections>"; uv run python -m scripts.check_connector
 ```
 
-The second command intentionally calls Gemini with fictional data on an isolated SQLite database and saves real provider evidence under `test-results/creator-live`. It does not change application accounts or projects. It creates a local test account `creator-tester` / `CreatorLocalTest!2026` only in that test database. Standard tests simulate model responses; Turso destructive tests require a separate test database and refuse the production URL.
+The second command is a read-only check of the WorkBuddy connector against your running server: it confirms the five MCP tools and calls `trendforge_health`. Standard tests simulate agent responses; Turso destructive tests require a separate test database and refuse the production URL.
 
 Existing video endpoints/data remain compatible. The website now includes both the Challenge C content flow and Video studio; MCP tools retain the agent-only workflow and cannot release a connected creator video's files. Previous setup documentation is archived in [the legacy reference](docs/LEGACY_VIDEO_WORKSPACE.md). Existing multi-user accounts continue to use their original passwords. Older unowned projects require the explicit claim procedure in that reference.
